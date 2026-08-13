@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import StitchPatternManager from './StitchPatternManager.jsx'
+import { generateId } from './geometry/id.js'
 
 function OffsetPathControls({ piece, offsetPaths, dispatch }) {
   const [distance, setDistance] = useState(5)
@@ -21,7 +22,7 @@ function OffsetPathControls({ piece, offsetPaths, dispatch }) {
             dispatch({
               type: 'ADD_OFFSET_PATH',
               offsetPath: {
-                id: crypto.randomUUID(),
+                id: generateId(),
                 name: `오프셋 +${distance}mm`,
                 sourcePieceId: piece.id,
                 offsetDistance: distance,
@@ -74,7 +75,7 @@ function StitchLineControls({ piece, document, dispatch }) {
             dispatch({
               type: 'ADD_STITCH_LINE',
               stitchLine: {
-                id: crypto.randomUUID(),
+                id: generateId(),
                 name: `스티치 -${inset}mm`,
                 sourcePieceId: piece.id,
                 insetDistance: inset,

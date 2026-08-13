@@ -2,6 +2,7 @@
 // changes (pointerup, not every pointermove) push a snapshot onto history --
 // in-progress drag previews live in local component state instead.
 import { useReducer } from 'react'
+import { generateId } from './geometry/id.js'
 
 const HISTORY_LIMIT = 100
 
@@ -41,7 +42,7 @@ export function patternReducer(state, action) {
       return { ...state, toolMode: action.mode }
 
     case 'START_NEW_PIECE': {
-      const id = crypto.randomUUID()
+      const id = generateId()
       const piece = {
         id,
         name: `조각 ${state.document.pieces.length + 1}`,
@@ -55,7 +56,7 @@ export function patternReducer(state, action) {
     case 'ADD_VERTEX': {
       const nextPieces = state.document.pieces.map((p) =>
         p.id === action.pieceId
-          ? { ...p, vertices: [...p.vertices, { id: crypto.randomUUID(), point: action.point, cornerRadius: 0 }] }
+          ? { ...p, vertices: [...p.vertices, { id: generateId(), point: action.point, cornerRadius: 0 }] }
           : p
       )
       return commit(state, { ...state.document, pieces: nextPieces })

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { generateId } from './geometry/id.js'
 
 function StitchPatternManager({ document, dispatch }) {
   const [name, setName] = useState('기본 스티치')
@@ -9,7 +10,7 @@ function StitchPatternManager({ document, dispatch }) {
   function handleAdd() {
     dispatch({
       type: 'ADD_STITCH_PATTERN_DEF',
-      def: { id: crypto.randomUUID(), name, pitch, holeDiameter, style },
+      def: { id: generateId(), name, pitch, holeDiameter, style },
     })
   }
 
