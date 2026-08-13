@@ -1,20 +1,13 @@
-import { useEffect, useState } from 'react'
+import { Route, Routes } from 'react-router-dom'
+import PatternListPage from './pages/PatternListPage.jsx'
+import PatternEditorPage from './pages/PatternEditorPage.jsx'
 
 function App() {
-  const [message, setMessage] = useState('Loading...')
-
-  useEffect(() => {
-    fetch('/api/hello')
-      .then((res) => res.json())
-      .then((data) => setMessage(data.message))
-      .catch(() => setMessage('Failed to reach backend'))
-  }, [])
-
   return (
-    <div style={{ fontFamily: 'sans-serif', padding: '2rem' }}>
-      <h1>Leader App</h1>
-      <p>{message}</p>
-    </div>
+    <Routes>
+      <Route path="/" element={<PatternListPage />} />
+      <Route path="/patterns/:id" element={<PatternEditorPage />} />
+    </Routes>
   )
 }
 
