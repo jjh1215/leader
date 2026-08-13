@@ -25,6 +25,7 @@ function initState(document) {
     toolMode: 'select',
     activePieceId: null,
     selection: null, // { pieceId, vertexId }
+    selectedPieceIds: [], // whole-piece selection, for merge etc. -- separate from vertex `selection`
   }
 }
 
@@ -50,7 +51,13 @@ export function patternReducer(state, action) {
         vertices: [],
       }
       const nextDoc = { ...state.document, pieces: [...state.document.pieces, piece] }
-      return { ...commit(state, nextDoc), activePieceId: id, toolMode: 'draw-line', selection: null }
+      return {
+        ...commit(state, nextDoc),
+        activePieceId: id,
+        toolMode: 'draw-line',
+        selection: null,
+        selectedPieceIds: [],
+      }
     }
 
     case 'ADD_VERTEX': {
@@ -60,6 +67,54 @@ export function patternReducer(state, action) {
           : p
       )
       return commit(state, { ...state.document, pieces: nextPieces })
+    }
+
+    case 'ADD_RECT_PIECE': {
+      const { corner1, corner2 } = action
+      const minX = Math.min(corner1.x, corner2.x)
+      const maxX = Math.max(corner1.x, corner2.x)
+      const minY = Math.min(corner1.y, corner2.y)
+      const maxY = Math.max(corner1.y, corner2.y)
+      const piece = {
+        id: generateId(),
+        name: `조각 ${state.document.pieces.length + 1}`,
+        closed: true,
+        vertices: [
+          { id: generateId(), point: { x: minX, y: minY }, cornerRadius: 0 },
+          { id: generateId(), point: { x: maxX, y: minY }, cornerRadius: 0 },
+          { id: generateId(), point: { x: maxX, y: maxY }, cornerRadius: 0 },
+          { id: generateId(), point: { x: minX, y: maxY }, cornerRadius: 0 },
+        ],
+      }
+      const nextDoc = { ...state.document, pieces: [...state.document.pieces, piece] }
+      return {
+        ...commit(state, nextDoc),
+        activePieceId: null,
+        toolMode: 'select',
+        selection: null,
+        selectedPieceIds: [piece.id],
+      }
+    }
+
+    case 'ADD_LINE_PIECE': {
+      const { start, end } = action
+      const piece = {
+        id: generateId(),
+        name: `조각 ${state.document.pieces.length + 1}`,
+        closed: false,
+        vertices: [
+          { id: generateId(), point: start, cornerRadius: 0 },
+          { id: generateId(), point: end, cornerRadius: 0 },
+        ],
+      }
+      const nextDoc = { ...state.document, pieces: [...state.document.pieces, piece] }
+      return {
+        ...commit(state, nextDoc),
+        activePieceId: null,
+        toolMode: 'select',
+        selection: null,
+        selectedPieceIds: [piece.id],
+      }
     }
 
     case 'CLOSE_ACTIVE_PIECE': {
@@ -77,10 +132,82 @@ export function patternReducer(state, action) {
       return { ...state, activePieceId: null, toolMode: 'select' }
 
     case 'SELECT_VERTEX':
-      return { ...state, selection: { pieceId: action.pieceId, vertexId: action.vertexId } }
+      return { ...state, selection: { pieceId: action.pieceId, vertexId: action.vertexId }, selectedPieceIds: [] }
 
     case 'CLEAR_SELECTION':
       return { ...state, selection: null }
+
+    case 'SELECT_PIECE': {
+      const { pieceId, additive } = action
+      if (!additive) {
+        return { ...state, selection: null, selectedPieceIds: [pieceId] }
+      }
+      const already = state.selectedPieceIds.includes(pieceId)
+      const selectedPieceIds = already
+        ? state.selectedPieceIds.filter((id) => id !== pieceId)
+        : [...state.selectedPieceIds, pieceId]
+      return { ...state, selection: null, selectedPieceIds }
+    }
+
+    case 'CLEAR_PIECE_SELECTION':
+      return { ...state, selectedPieceIds: [] }
+
+    case 'MERGE_PIECES': {
+      const { pieceIdA, pieceIdB } = action
+      const a = state.document.pieces.find((p) => p.id === pieceIdA)
+      const b = state.document.pieces.find((p) => p.id === pieceIdB)
+      if (!a || !b || a.closed || b.closed || a.vertices.length < 2 || b.vertices.length < 2) {
+        return state
+      }
+
+      const dist = (p, q) => Math.hypot(p.point.x - q.point.x, p.point.y - q.point.y)
+      const aFirst = a.vertices[0]
+      const aLast = a.vertices[a.vertices.length - 1]
+      const bFirst = b.vertices[0]
+      const bLast = b.vertices[b.vertices.length - 1]
+
+      // Try all 4 end-to-end pairings and connect via whichever pair of
+      // endpoints is closest (the "overlapping" ends the user clicked together).
+      const candidates = [
+        { d: dist(aLast, bFirst), reverseA: false, reverseB: false },
+        { d: dist(aLast, bLast), reverseA: false, reverseB: true },
+        { d: dist(aFirst, bFirst), reverseA: true, reverseB: false },
+        { d: dist(aFirst, bLast), reverseA: true, reverseB: true },
+      ]
+      const best = candidates.reduce((min, c) => (c.d < min.d ? c : min))
+
+      const aVerts = best.reverseA ? [...a.vertices].reverse() : a.vertices
+      const bVerts = best.reverseB ? [...b.vertices].reverse() : b.vertices
+      // aVerts' last point and bVerts' first point are the joined pair --
+      // keep a's as the single joint vertex, drop b's duplicate.
+      const mergedPiece = {
+        id: generateId(),
+        name: a.name,
+        closed: false,
+        vertices: [...aVerts, ...bVerts.slice(1)],
+      }
+
+      const nextDoc = {
+        ...state.document,
+        pieces: [
+          ...state.document.pieces.filter((p) => p.id !== pieceIdA && p.id !== pieceIdB),
+          mergedPiece,
+        ],
+        stitchLines: state.document.stitchLines.filter(
+          (s) => s.sourcePieceId !== pieceIdA && s.sourcePieceId !== pieceIdB
+        ),
+        offsetPaths: state.document.offsetPaths.filter(
+          (o) => o.sourcePieceId !== pieceIdA && o.sourcePieceId !== pieceIdB
+        ),
+      }
+
+      return {
+        ...commit(state, nextDoc),
+        selectedPieceIds: [mergedPiece.id],
+        activePieceId: null,
+        selection: null,
+      }
+    }
 
     case 'MOVE_VERTEX': {
       const nextPieces = state.document.pieces.map((p) =>
@@ -128,6 +255,7 @@ export function patternReducer(state, action) {
         activePieceId: wasActive ? null : nextState.activePieceId,
         toolMode: wasActive ? 'select' : nextState.toolMode,
         selection: hadSelection ? null : nextState.selection,
+        selectedPieceIds: nextState.selectedPieceIds.filter((id) => id !== action.pieceId),
       }
     }
 

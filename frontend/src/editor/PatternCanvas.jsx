@@ -1,11 +1,13 @@
 import { useRef, useState } from 'react'
 import { flattenToPolygon, verticesToPathD } from './geometry/fillet.js'
+import { distanceToPolyline } from './geometry/hitTest.js'
 import { offsetPolygon } from './geometry/offset.js'
 import { pointsToPathD } from './geometry/path.js'
 import { pxToMm, screenToDocPoint } from './geometry/screenToDoc.js'
 import { placeStitchHoles } from './geometry/stitch.js'
 
 const HIT_RADIUS_PX = 8
+const MIN_SHAPE_DRAG_MM = 0.5 // ignore accidental clicks-without-drag for rect/line tools
 const DEFAULT_VIEWBOX = { x: -20, y: -20, width: 240, height: 240 }
 
 function Grid({ viewBox }) {
@@ -54,8 +56,9 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
   const [viewBox, setViewBox] = useState(DEFAULT_VIEWBOX)
   const [dragVertex, setDragVertex] = useState(null) // transient preview: { pieceId, vertexId, point }
   const [panStart, setPanStart] = useState(null)
+  const [shapeDrag, setShapeDrag] = useState(null) // transient rect/line preview: { start, end }
 
-  const { document, toolMode, activePieceId, selection } = state
+  const { document, toolMode, activePieceId, selection, selectedPieceIds } = state
 
   function toDoc(e) {
     return screenToDocPoint(svgRef.current, viewBox, e.clientX, e.clientY)
@@ -81,6 +84,22 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     return best
   }
 
+  function findNearestPiece(point) {
+    const threshold = hitRadiusMm()
+    let best = null
+    let bestDist = threshold
+    for (const piece of document.pieces) {
+      if (piece.vertices.length < 2) continue
+      const poly = flattenToPolygon(piece.vertices, piece.closed)
+      const d = distanceToPolyline(point, poly, piece.closed)
+      if (d < bestDist) {
+        bestDist = d
+        best = piece.id
+      }
+    }
+    return best
+  }
+
   function handlePointerDown(e) {
     const point = toDoc(e)
 
@@ -98,6 +117,11 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       return
     }
 
+    if (toolMode === 'rect' || toolMode === 'line') {
+      setShapeDrag({ start: point, end: point })
+      return
+    }
+
     if (toolMode === 'select') {
       const hit = findNearestVertex(point)
       if (hit) {
@@ -105,8 +129,14 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         const piece = document.pieces.find((p) => p.id === hit.pieceId)
         const v = piece.vertices.find((vv) => vv.id === hit.vertexId)
         setDragVertex({ ...hit, point: v.point })
-      } else {
+        return
+      }
+      const pieceId = findNearestPiece(point)
+      if (pieceId) {
+        dispatch({ type: 'SELECT_PIECE', pieceId, additive: e.shiftKey })
+      } else if (!e.shiftKey) {
         dispatch({ type: 'CLEAR_SELECTION' })
+        dispatch({ type: 'CLEAR_PIECE_SELECTION' })
       }
       return
     }
@@ -119,6 +149,8 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
   function handlePointerMove(e) {
     if (dragVertex) {
       setDragVertex({ ...dragVertex, point: toDoc(e) })
+    } else if (shapeDrag) {
+      setShapeDrag({ ...shapeDrag, end: toDoc(e) })
     } else if (panStart) {
       const rect = svgRef.current.getBoundingClientRect()
       const dxMm = (e.clientX - panStart.clientX) * (panStart.viewBox.width / rect.width)
@@ -136,6 +168,17 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         point: dragVertex.point,
       })
       setDragVertex(null)
+    }
+    if (shapeDrag) {
+      const dist = Math.hypot(shapeDrag.end.x - shapeDrag.start.x, shapeDrag.end.y - shapeDrag.start.y)
+      if (dist >= MIN_SHAPE_DRAG_MM) {
+        if (toolMode === 'rect') {
+          dispatch({ type: 'ADD_RECT_PIECE', corner1: shapeDrag.start, corner2: shapeDrag.end })
+        } else if (toolMode === 'line') {
+          dispatch({ type: 'ADD_LINE_PIECE', start: shapeDrag.start, end: shapeDrag.end })
+        }
+      }
+      setShapeDrag(null)
     }
     setPanStart(null)
   }
@@ -187,7 +230,12 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         background: '#fafafa',
         touchAction: 'none',
         outline: 'none',
-        cursor: toolMode === 'pan' ? 'grab' : toolMode === 'draw-line' ? 'crosshair' : 'default',
+        cursor:
+          toolMode === 'pan'
+            ? 'grab'
+            : toolMode === 'draw-line' || toolMode === 'rect' || toolMode === 'line'
+              ? 'crosshair'
+              : 'default',
       }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -205,6 +253,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
             : piece.vertices
         const d = vertices.length >= 2 ? verticesToPathD(vertices, piece.closed) : ''
         const isActive = piece.id === activePieceId
+        const isSelected = selectedPieceIds.includes(piece.id)
 
         return (
           <g key={piece.id}>
@@ -212,8 +261,8 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
               <path
                 d={d}
                 fill={piece.closed ? 'rgba(122, 74, 30, 0.08)' : 'none'}
-                stroke="#7a4a1e"
-                strokeWidth={1.5}
+                stroke={isSelected ? '#1e6fe0' : '#7a4a1e'}
+                strokeWidth={isSelected ? 2.5 : 1.5}
                 vectorEffect="non-scaling-stroke"
               />
             )}
@@ -287,6 +336,32 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
           </g>
         )
       })}
+
+      {shapeDrag &&
+        (toolMode === 'rect' ? (
+          <rect
+            x={Math.min(shapeDrag.start.x, shapeDrag.end.x)}
+            y={Math.min(shapeDrag.start.y, shapeDrag.end.y)}
+            width={Math.abs(shapeDrag.end.x - shapeDrag.start.x)}
+            height={Math.abs(shapeDrag.end.y - shapeDrag.start.y)}
+            fill="rgba(30,111,224,0.08)"
+            stroke="#1e6fe0"
+            strokeDasharray="4 2"
+            strokeWidth={1.5}
+            vectorEffect="non-scaling-stroke"
+          />
+        ) : (
+          <line
+            x1={shapeDrag.start.x}
+            y1={shapeDrag.start.y}
+            x2={shapeDrag.end.x}
+            y2={shapeDrag.end.y}
+            stroke="#1e6fe0"
+            strokeDasharray="4 2"
+            strokeWidth={1.5}
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
     </svg>
   )
 }
