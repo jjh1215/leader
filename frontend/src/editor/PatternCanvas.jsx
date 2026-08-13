@@ -1,5 +1,7 @@
 import { useRef, useState } from 'react'
-import { verticesToPathD } from './geometry/fillet.js'
+import { flattenToPolygon, verticesToPathD } from './geometry/fillet.js'
+import { offsetPolygon } from './geometry/offset.js'
+import { pointsToPathD } from './geometry/path.js'
 import { pxToMm, screenToDocPoint } from './geometry/screenToDoc.js'
 
 const HIT_RADIUS_PX = 8
@@ -227,6 +229,28 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
                   vectorEffect="non-scaling-stroke"
                 />
               ))}
+          </g>
+        )
+      })}
+
+      {document.offsetPaths.map((offsetPath) => {
+        const piece = document.pieces.find((p) => p.id === offsetPath.sourcePieceId)
+        if (!piece || piece.vertices.length < 2) return null
+        const flattened = flattenToPolygon(piece.vertices, piece.closed)
+        const loops = offsetPolygon(flattened, offsetPath.offsetDistance, piece.closed)
+        return (
+          <g key={offsetPath.id}>
+            {loops.map((loop, i) => (
+              <path
+                key={i}
+                d={pointsToPathD(loop, piece.closed)}
+                fill="none"
+                stroke="#2a7a4a"
+                strokeDasharray="6 3"
+                strokeWidth={1.2}
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
           </g>
         )
       })}
