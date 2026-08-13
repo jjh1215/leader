@@ -1,4 +1,4 @@
-function Toolbar({ state, dispatch }) {
+function Toolbar({ state, dispatch, actualSize, onToggleActualSize, calibrated, onOpenCalibration }) {
   const { toolMode, document, selection, past, future } = state
 
   const selectedVertex = selection
@@ -35,6 +35,15 @@ function Toolbar({ state, dispatch }) {
       </button>
       <button onClick={() => dispatch({ type: 'REDO' })} disabled={future.length === 0}>
         ↷ 다시실행
+      </button>
+
+      <span style={{ borderLeft: '1px solid #ccc', height: '1.5rem' }} />
+
+      <button onClick={onOpenCalibration}>
+        {calibrated ? '화면 보정 다시하기' : '⚠ 화면 보정 필요'}
+      </button>
+      <button onClick={onToggleActualSize} disabled={!calibrated} aria-pressed={actualSize}>
+        {actualSize ? '✓ 실물 크기로 보는 중' : '실물 크기로 보기'}
       </button>
 
       {selectedVertex && (

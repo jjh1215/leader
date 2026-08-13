@@ -46,7 +46,7 @@ function Grid({ viewBox }) {
   return <g>{lines}</g>
 }
 
-function PatternCanvas({ state, dispatch }) {
+function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.4 }) {
   const svgRef = useRef(null)
   const [viewBox, setViewBox] = useState(DEFAULT_VIEWBOX)
   const [dragVertex, setDragVertex] = useState(null) // transient preview: { pieceId, vertexId, point }
@@ -165,14 +165,22 @@ function PatternCanvas({ state, dispatch }) {
 
   const vertexRadiusMm = viewBox.width / 130
 
+  // In "actual size" mode the SVG is given an explicit CSS pixel size derived
+  // from the calibrated pxPerMm, instead of stretching to fill its container --
+  // that's what makes holding a physical ruler to the screen agree with the
+  // document's mm coordinates. Regular mode fills the available space instead.
+  const sizeStyle = actualSize
+    ? { width: viewBox.width * pxPerMm, height: viewBox.height * pxPerMm }
+    : { width: '100%', height: '100%' }
+
   return (
     <svg
       ref={svgRef}
       viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
       tabIndex={0}
       style={{
-        width: '100%',
-        height: '100%',
+        ...sizeStyle,
+        display: 'block',
         background: '#fafafa',
         touchAction: 'none',
         outline: 'none',

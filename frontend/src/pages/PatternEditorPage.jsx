@@ -5,6 +5,8 @@ import { usePatternReducer, emptyDocument } from '../editor/patternReducer.js'
 import PatternCanvas from '../editor/PatternCanvas.jsx'
 import Toolbar from '../editor/Toolbar.jsx'
 import PieceListSidebar from '../editor/PieceListSidebar.jsx'
+import { useScreenCalibration } from '../calibration/useScreenCalibration.js'
+import CalibrationModal from '../calibration/CalibrationModal.jsx'
 
 function PatternEditorPage() {
   const { id } = useParams()
@@ -14,6 +16,9 @@ function PatternEditorPage() {
   const [saving, setSaving] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [state, dispatch] = usePatternReducer(emptyDocument())
+  const calibration = useScreenCalibration()
+  const [actualSize, setActualSize] = useState(false)
+  const [showCalibrationModal, setShowCalibrationModal] = useState(false)
 
   useEffect(() => {
     getPattern(id)
@@ -64,15 +69,34 @@ function PatternEditorPage() {
       </div>
 
       <div style={{ padding: '0 1rem', borderBottom: '1px solid #eee' }}>
-        <Toolbar state={state} dispatch={dispatch} />
+        <Toolbar
+          state={state}
+          dispatch={dispatch}
+          actualSize={actualSize}
+          onToggleActualSize={() => setActualSize((v) => !v)}
+          calibrated={calibration.calibrated}
+          onOpenCalibration={() => setShowCalibrationModal(true)}
+        />
       </div>
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ flex: 1 }}>
-          <PatternCanvas state={state} dispatch={dispatch} />
+        <div style={{ flex: 1, overflow: 'auto' }}>
+          <PatternCanvas
+            state={state}
+            dispatch={dispatch}
+            actualSize={actualSize}
+            pxPerMm={calibration.pxPerMm}
+          />
         </div>
         <PieceListSidebar state={state} dispatch={dispatch} />
       </div>
+
+      {showCalibrationModal && (
+        <CalibrationModal
+          onClose={() => setShowCalibrationModal(false)}
+          onCalibrate={calibration.setPxPerMm}
+        />
+      )}
     </div>
   )
 }
