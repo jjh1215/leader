@@ -1,0 +1,11 @@
+[Unit]
+Description=Leader Backend (Spring Boot)
+After=network.target
+
+[Service]
+ExecStart=/home/claude/.sdkman/candidates/java/current/bin/java -jar /home/claude/leader/app.jar
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

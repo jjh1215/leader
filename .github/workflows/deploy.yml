@@ -1,0 +1,76 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-backend:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build jar
+        working-directory: backend
+        run: mvn -B -DskipTests package
+
+      - name: Upload jar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: backend/target/app.jar
+
+  build-frontend:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+  deploy:
+    needs: [build-backend, build-frontend]
+    runs-on: self-hosted
+    steps:
+      - name: Download jar artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: dist/jar
+
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist/frontend
+
+      - name: Deploy backend
+        run: |
+          export XDG_RUNTIME_DIR=/run/user/$(id -u)
+          cp dist/jar/app.jar ~/leader/app.jar
+          systemctl --user restart leader-backend
+
+      - name: Deploy frontend
+        run: |
+          rm -rf ~/leader/frontend/dist_new
+          mkdir -p ~/leader/frontend/dist_new
+          cp -r dist/frontend/. ~/leader/frontend/dist_new/
+          rm -rf ~/leader/frontend/dist_old
+          if [ -d ~/leader/frontend/dist ]; then
+            mv ~/leader/frontend/dist ~/leader/frontend/dist_old
+          fi
+          mv ~/leader/frontend/dist_new ~/leader/frontend/dist
+          rm -rf ~/leader/frontend/dist_old
+          restorecon -Rv ~/leader/frontend/dist
+          sudo /usr/sbin/nginx -s reload

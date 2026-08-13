@@ -1,0 +1,13 @@
+[Unit]
+Description=GitHub Actions self-hosted runner (leader)
+After=network.target
+
+[Service]
+WorkingDirectory=/home/claude/leader-actions-runner
+Environment=PATH=/home/claude/.sdkman/candidates/java/current/bin:/home/claude/.sdkman/candidates/maven/current/bin:/home/claude/.nvm/versions/node/v22.23.2/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin
+ExecStart=/home/claude/leader-actions-runner/run.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
