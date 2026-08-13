@@ -119,7 +119,15 @@ export function patternReducer(state, action) {
         stitchLines: state.document.stitchLines.filter((s) => s.sourcePieceId !== action.pieceId),
         offsetPaths: state.document.offsetPaths.filter((o) => o.sourcePieceId !== action.pieceId),
       }
-      return commit(state, nextDoc)
+      const nextState = commit(state, nextDoc)
+      const wasActive = state.activePieceId === action.pieceId
+      const hadSelection = state.selection?.pieceId === action.pieceId
+      return {
+        ...nextState,
+        activePieceId: wasActive ? null : nextState.activePieceId,
+        toolMode: wasActive ? 'select' : nextState.toolMode,
+        selection: hadSelection ? null : nextState.selection,
+      }
     }
 
     case 'RENAME_PIECE': {

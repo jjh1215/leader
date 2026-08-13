@@ -30,6 +30,18 @@ function PatternEditorPage() {
       .catch((e) => setError(e.message))
   }, [id])
 
+  useEffect(() => {
+    function handleGlobalKeyDown(e) {
+      const tag = document.activeElement?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return
+      e.preventDefault()
+      dispatch({ type: e.shiftKey ? 'REDO' : 'UNDO' })
+    }
+    window.addEventListener('keydown', handleGlobalKeyDown)
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown)
+  }, [dispatch])
+
   async function handleSave() {
     setSaving(true)
     try {
