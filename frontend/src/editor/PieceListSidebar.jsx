@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import StitchPatternManager from './StitchPatternManager.jsx'
 
 function OffsetPathControls({ piece, offsetPaths, dispatch }) {
   const [distance, setDistance] = useState(5)
@@ -41,11 +42,67 @@ function OffsetPathControls({ piece, offsetPaths, dispatch }) {
   )
 }
 
+function StitchLineControls({ piece, document, dispatch }) {
+  const [inset, setInset] = useState(3)
+  const [defId, setDefId] = useState(document.stitchPatternDefs[0]?.id ?? '')
+  const pieceStitchLines = document.stitchLines.filter((s) => s.sourcePieceId === piece.id)
+
+  if (document.stitchPatternDefs.length === 0) {
+    return <p style={{ fontSize: '0.7rem', color: '#888', marginLeft: '0.5rem' }}>스티치 라인을 추가하려면 먼저 위에서 프리셋을 만드세요</p>
+  }
+
+  return (
+    <div style={{ marginLeft: '0.5rem', marginTop: '0.25rem' }}>
+      <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        <input
+          type="number"
+          step="0.5"
+          value={inset}
+          onChange={(e) => setInset(Number(e.target.value))}
+          style={{ width: '3.5rem' }}
+        />
+        <span style={{ fontSize: '0.75rem' }}>mm 인셋</span>
+        <select value={defId} onChange={(e) => setDefId(e.target.value)}>
+          {document.stitchPatternDefs.map((def) => (
+            <option key={def.id} value={def.id}>
+              {def.name}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() =>
+            dispatch({
+              type: 'ADD_STITCH_LINE',
+              stitchLine: {
+                id: crypto.randomUUID(),
+                name: `스티치 -${inset}mm`,
+                sourcePieceId: piece.id,
+                insetDistance: inset,
+                stitchPatternDefId: defId,
+              },
+            })
+          }
+        >
+          + 스티치 라인
+        </button>
+      </div>
+      {pieceStitchLines.map((s) => (
+        <div key={s.id} style={{ fontSize: '0.75rem', color: '#b03060', display: 'flex', justifyContent: 'space-between' }}>
+          <span>{s.name}</span>
+          <button onClick={() => dispatch({ type: 'DELETE_STITCH_LINE', id: s.id })}>×</button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function PieceListSidebar({ state, dispatch }) {
   const { document } = state
 
   return (
-    <div style={{ width: 260, borderLeft: '1px solid #ddd', padding: '0.75rem', overflowY: 'auto' }}>
+    <div style={{ width: 280, borderLeft: '1px solid #ddd', padding: '0.75rem', overflowY: 'auto' }}>
+      <StitchPatternManager document={document} dispatch={dispatch} />
+
       <h3 style={{ marginTop: 0 }}>레이아웃 조각</h3>
       {document.pieces.length === 0 && <p style={{ color: '#888' }}>아직 없음</p>}
       <ul style={{ listStyle: 'none', padding: 0 }}>
@@ -61,6 +118,7 @@ function PieceListSidebar({ state, dispatch }) {
               <button onClick={() => dispatch({ type: 'DELETE_PIECE', pieceId: piece.id })}>×</button>
             </div>
             <OffsetPathControls piece={piece} offsetPaths={document.offsetPaths} dispatch={dispatch} />
+            <StitchLineControls piece={piece} document={document} dispatch={dispatch} />
           </li>
         ))}
       </ul>

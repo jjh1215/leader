@@ -3,6 +3,7 @@ import { flattenToPolygon, verticesToPathD } from './geometry/fillet.js'
 import { offsetPolygon } from './geometry/offset.js'
 import { pointsToPathD } from './geometry/path.js'
 import { pxToMm, screenToDocPoint } from './geometry/screenToDoc.js'
+import { placeStitchHoles } from './geometry/stitch.js'
 
 const HIT_RADIUS_PX = 8
 const DEFAULT_VIEWBOX = { x: -20, y: -20, width: 240, height: 240 }
@@ -251,6 +252,38 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
                 vectorEffect="non-scaling-stroke"
               />
             ))}
+          </g>
+        )
+      })}
+
+      {document.stitchLines.map((stitchLine) => {
+        const piece = document.pieces.find((p) => p.id === stitchLine.sourcePieceId)
+        const def = document.stitchPatternDefs.find((d) => d.id === stitchLine.stitchPatternDefId)
+        if (!piece || !def || piece.vertices.length < 2) return null
+        const flattened = flattenToPolygon(piece.vertices, piece.closed)
+        const loops = offsetPolygon(flattened, -stitchLine.insetDistance, piece.closed)
+        const holeRadius = def.holeDiameter / 2
+
+        return (
+          <g key={stitchLine.id}>
+            {loops.flatMap((loop, li) => {
+              const holes = placeStitchHoles(loop, piece.closed, def.pitch)
+              return holes.map((h, hi) =>
+                def.style === 'diagonal' ? (
+                  <rect
+                    key={`${li}-${hi}`}
+                    x={h.x - holeRadius}
+                    y={h.y - holeRadius}
+                    width={holeRadius * 2}
+                    height={holeRadius * 2}
+                    transform={`rotate(45 ${h.x} ${h.y})`}
+                    fill="#b03060"
+                  />
+                ) : (
+                  <circle key={`${li}-${hi}`} cx={h.x} cy={h.y} r={holeRadius} fill="#b03060" />
+                )
+              )
+            })}
           </g>
         )
       })}
