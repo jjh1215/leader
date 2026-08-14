@@ -29,35 +29,51 @@ function hasHoleAt(holes, point) {
 }
 
 describe('placeStitchHoles', () => {
-  it('anchors a hole at every corner, adjusting pitch per edge rather than once for the whole perimeter', () => {
-    // Each 10mm edge independently fits round(10/4)=3 holes at that edge's own
-    // adjusted pitch (10/3mm) -- 4 edges * 3 = 12 holes, more than a naive
-    // perimeter/pitch estimate (40/4=10) would suggest, but every corner gets
-    // one instead of 3 of the 4 corners landing at an odd, un-anchored offset.
+  it('keeps the exact requested pitch everywhere except the closing gap into each corner', () => {
+    // Each 10mm edge fits round(10/4)=3 holes at the literal 4mm pitch (0,
+    // 4, 8mm), leaving a short 2mm closing gap into the next corner instead
+    // of shaving every gap down to an adjusted 3.33mm -- the correction
+    // stays local to the corner, the base spacing elsewhere is untouched.
     const holes = placeStitchHoles(SQUARE_10, true, 4)
-    expect(holes).toHaveLength(12)
+    expect(holes).toEqual([
+      { x: 0, y: 0 },
+      { x: 4, y: 0 },
+      { x: 8, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 4 },
+      { x: 10, y: 8 },
+      { x: 10, y: 10 },
+      { x: 6, y: 10 },
+      { x: 2, y: 10 },
+      { x: 0, y: 10 },
+      { x: 0, y: 6 },
+      { x: 0, y: 2 },
+    ])
     for (const corner of SQUARE_10) {
       expect(hasHoleAt(holes, corner)).toBe(true)
     }
-    const expectedSpacing = 10 / 3
+    // Every gap is either the literal 4mm pitch or the one 2mm closing gap
+    // per edge -- never anything in between (no whole-edge redistribution).
     for (let i = 0; i < holes.length; i++) {
       const next = holes[(i + 1) % holes.length]
-      expect(boundaryDistance(holes[i], next)).toBeCloseTo(expectedSpacing, 6)
+      const d = boundaryDistance(holes[i], next)
+      expect(d === 4 || d === 2).toBe(true)
     }
   })
 
-  it('adjusts pitch per edge so a requested pitch that does not divide an edge evenly still lands cleanly', () => {
-    // Each edge: round(10/6)=2 holes at adjusted pitch 10/2=5mm -- 4*2=8 total.
+  it('leaves a shorter closing gap (not a redistributed pitch) when the edge does not divide evenly', () => {
+    // Each edge: round(10/6)=2 holes at the literal 6mm pitch (0, 6), then a
+    // 4mm closing gap into the next corner -- not an adjusted 5mm throughout.
     const holes = placeStitchHoles(SQUARE_10, true, 6)
     expect(holes).toEqual([
       { x: 0, y: 0 },
-      { x: 5, y: 0 },
+      { x: 6, y: 0 },
       { x: 10, y: 0 },
-      { x: 10, y: 5 },
+      { x: 10, y: 6 },
       { x: 10, y: 10 },
-      { x: 5, y: 10 },
+      { x: 4, y: 10 },
       { x: 0, y: 10 },
-      { x: 0, y: 5 },
+      { x: 0, y: 4 },
     ])
   })
 

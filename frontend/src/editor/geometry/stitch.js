@@ -83,19 +83,15 @@ export function offsetOpenPolyline(points, distanceMm) {
   })
 }
 
-// Returns hole center points spaced at approximately pitchMm along the path,
-// with a hole anchored at every vertex (corner) -- pitch is nudged per EDGE
-// (not once for the whole perimeter/path) so each straight run between two
-// corners divides evenly on its own. A single perimeter-wide adjusted pitch
-// only guarantees even spacing in aggregate: the loop's first point always
-// gets a hole (since holes are walked from there), but the perimeter rarely
-// divides evenly into pitch at every OTHER corner too, so 3 corners out of 4
-// on a plain rectangle would end up with a hole sitting oddly close to (but
-// not on) them instead of centered on the corner like the first one -- which
-// reads as visibly uneven/wrong right where it's most noticeable. Per-edge
-// adjustment costs only "the realized pitch can vary slightly edge to edge"
-// (typically imperceptible, and edges are usually similar lengths anyway) in
-// exchange for every corner always getting its own hole.
+// Returns hole center points spaced at exactly pitchMm along the path, with
+// a hole anchored at every vertex (corner). The base pitch is never
+// adjusted -- only the single closing gap at the end of each edge (from the
+// last full-pitch hole to the next corner) absorbs whatever's left over, so
+// the correction stays local to the corner instead of shaving a bit off
+// every gap along the whole edge. E.g. a 10mm edge at pitch 4mm places
+// holes at 0, 4, 8mm (exactly 4mm apart, as requested) and leaves a 2mm
+// closing gap into the next corner, rather than redistributing to 3.33mm
+// everywhere.
 export function placeStitchHoles(points, closed, pitchMm) {
   if (points.length < 2 || pitchMm <= 0) return []
   const n = points.length
@@ -108,7 +104,8 @@ export function placeStitchHoles(points, closed, pitchMm) {
     const segLen = Math.hypot(b.x - a.x, b.y - a.y)
     const count = segLen > 0 ? Math.max(1, Math.round(segLen / pitchMm)) : 1
     for (let k = 0; k < count; k++) {
-      const t = segLen > 0 ? (k * (segLen / count)) / segLen : 0
+      const dist = Math.min(k * pitchMm, segLen)
+      const t = segLen > 0 ? dist / segLen : 0
       holes.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t })
     }
   }
