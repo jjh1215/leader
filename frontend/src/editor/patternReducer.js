@@ -5,7 +5,7 @@ import { useReducer } from 'react'
 import { generateId } from './geometry/id.js'
 import { flattenToPolygon } from './geometry/fillet.js'
 import { resolveDockPoint } from './geometry/edgeDock.js'
-import { splitClosedPolygonByLine } from './geometry/splitPolygon.js'
+import { splitClosedPieceAtVertexIndices, splitClosedPolygonByLine } from './geometry/splitPolygon.js'
 import { unionPolygons } from './geometry/polygonUnion.js'
 import { stitchMergeAtSharedVertices } from './geometry/stitchMerge.js'
 
@@ -32,6 +32,7 @@ function initState(document) {
     activePieceId: null,
     selection: null, // { pieceId, vertexId }
     selectedPieceIds: [], // whole-piece selection, for merge etc. -- separate from vertex `selection`
+    selectedVertexIds: [], // multi-vertex selection (Shift+click), for split-at-these-2-points
   }
 }
 
@@ -174,7 +175,12 @@ export function patternReducer(state, action) {
       return { ...state, activePieceId: null, toolMode: 'select' }
 
     case 'SELECT_VERTEX':
-      return { ...state, selection: { pieceId: action.pieceId, vertexId: action.vertexId }, selectedPieceIds: [] }
+      return {
+        ...state,
+        selection: { pieceId: action.pieceId, vertexId: action.vertexId },
+        selectedPieceIds: [],
+        selectedVertexIds: [],
+      }
 
     case 'CLEAR_SELECTION':
       return { ...state, selection: null }
@@ -182,13 +188,13 @@ export function patternReducer(state, action) {
     case 'SELECT_PIECE': {
       const { pieceId, additive } = action
       if (!additive) {
-        return { ...state, selection: null, selectedPieceIds: [pieceId] }
+        return { ...state, selection: null, selectedPieceIds: [pieceId], selectedVertexIds: [] }
       }
       const already = state.selectedPieceIds.includes(pieceId)
       const selectedPieceIds = already
         ? state.selectedPieceIds.filter((id) => id !== pieceId)
         : [...state.selectedPieceIds, pieceId]
-      return { ...state, selection: null, selectedPieceIds }
+      return { ...state, selection: null, selectedPieceIds, selectedVertexIds: [] }
     }
 
     // Marquee/drag-select result: a set of piece ids all at once. Unlike
@@ -199,11 +205,68 @@ export function patternReducer(state, action) {
       const selectedPieceIds = additive
         ? Array.from(new Set([...state.selectedPieceIds, ...pieceIds]))
         : pieceIds
-      return { ...state, selection: null, selectedPieceIds }
+      return { ...state, selection: null, selectedPieceIds, selectedVertexIds: [] }
     }
 
     case 'CLEAR_PIECE_SELECTION':
       return { ...state, selectedPieceIds: [] }
+
+    // Multi-vertex selection (Shift+click on a vertex in select mode) --
+    // separate from `selection` (the single-vertex, drag-to-move kind).
+    // Used to pick 2 points on the same closed piece to split it at, e.g.
+    // re-selecting the seam MERGE_PIECES left behind.
+    case 'TOGGLE_VERTEX_SELECTION': {
+      const { pieceId, vertexId } = action
+      const already = state.selectedVertexIds.some((v) => v.pieceId === pieceId && v.vertexId === vertexId)
+      const selectedVertexIds = already
+        ? state.selectedVertexIds.filter((v) => !(v.pieceId === pieceId && v.vertexId === vertexId))
+        : [...state.selectedVertexIds, { pieceId, vertexId }]
+      return { ...state, selection: null, selectedPieceIds: [], selectedVertexIds }
+    }
+
+    case 'CLEAR_VERTEX_SELECTION':
+      return { ...state, selectedVertexIds: [] }
+
+    // The inverse of MERGE_PIECES' stitch path: cuts a closed piece into two
+    // at 2 of its own existing vertices (see splitPolygon.js), instead of
+    // needing a separate cutting-line piece. Typically used to re-split
+    // exactly at the seam a prior stitch-merge left behind.
+    case 'SPLIT_PIECE_AT_VERTICES': {
+      const { pieceId, vertexIdA, vertexIdB } = action
+      const piece = state.document.pieces.find((p) => p.id === pieceId)
+      if (!piece || !piece.closed || vertexIdA === vertexIdB) return state
+
+      const indexA = piece.vertices.findIndex((v) => v.id === vertexIdA)
+      const indexB = piece.vertices.findIndex((v) => v.id === vertexIdB)
+      if (indexA === -1 || indexB === -1) return state
+
+      const result = splitClosedPieceAtVertexIndices(piece.vertices, indexA, indexB)
+      if (!result) return state
+
+      const toPiece = (arc, suffix) => ({
+        id: generateId(),
+        name: `${piece.name} ${suffix}`,
+        closed: true,
+        vertices: arc.map((v) => ({ ...v, id: generateId() })),
+      })
+      const pieceA = toPiece(result[0], 'A')
+      const pieceB = toPiece(result[1], 'B')
+
+      const nextDoc = {
+        ...state.document,
+        pieces: [...state.document.pieces.filter((p) => p.id !== pieceId), pieceA, pieceB],
+        stitchLines: state.document.stitchLines.filter((s) => s.sourcePieceId !== pieceId),
+        offsetPaths: state.document.offsetPaths.filter((o) => o.sourcePieceId !== pieceId),
+      }
+
+      return {
+        ...commit(state, nextDoc),
+        selectedPieceIds: [pieceA.id, pieceB.id],
+        selectedVertexIds: [],
+        activePieceId: null,
+        selection: null,
+      }
+    }
 
     // Two closed shapes merge either by stitching their original vertices
     // back together (the CAD-like, identity-preserving path -- used when
@@ -469,6 +532,7 @@ export function patternReducer(state, action) {
         toolMode: wasActive ? 'select' : nextState.toolMode,
         selection: hadSelection ? null : nextState.selection,
         selectedPieceIds: nextState.selectedPieceIds.filter((id) => id !== action.pieceId),
+        selectedVertexIds: nextState.selectedVertexIds.filter((v) => v.pieceId !== action.pieceId),
       }
     }
 
@@ -492,6 +556,7 @@ export function patternReducer(state, action) {
         toolMode: wasActive ? 'select' : nextState.toolMode,
         selection: hadSelection ? null : nextState.selection,
         selectedPieceIds: nextState.selectedPieceIds.filter((id) => !pieceIds.includes(id)),
+        selectedVertexIds: nextState.selectedVertexIds.filter((v) => !pieceIds.includes(v.pieceId)),
       }
     }
 

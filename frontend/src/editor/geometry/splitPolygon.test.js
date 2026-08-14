@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { splitClosedPolygonByLine } from './splitPolygon.js'
+import { splitClosedPieceAtVertexIndices, splitClosedPolygonByLine } from './splitPolygon.js'
+import { stitchMergeAtSharedVertices } from './stitchMerge.js'
 
 const square10 = [
   { x: 0, y: 0 },
@@ -68,5 +69,66 @@ describe('splitClosedPolygonByLine', () => {
 
   it('returns null for a degenerate (<3 point) polygon', () => {
     expect(splitClosedPolygonByLine([{ x: 0, y: 0 }, { x: 1, y: 1 }], { x: 0, y: 5 }, { x: 5, y: 0 })).toBeNull()
+  })
+})
+
+function v(x, y) {
+  return { point: { x, y }, cornerRadius: 0 }
+}
+
+describe('splitClosedPieceAtVertexIndices', () => {
+  it('splits a hexagon (the result of a prior split+merge) back at its own seam points', () => {
+    // Exactly the 6-point shape stitchMerge.js produces when re-joining a
+    // split square: 4 original corners + the 2 seam points at index 0 and 3.
+    const merged = [v(10, 5), v(10, 10), v(0, 10), v(0, 5), v(0, 0), v(10, 0)]
+    const result = splitClosedPieceAtVertexIndices(merged, 0, 3)
+    expect(result).not.toBeNull()
+    const [arcA, arcB] = result
+    expect(arcA.map((p) => p.point)).toEqual([
+      { x: 10, y: 5 },
+      { x: 10, y: 10 },
+      { x: 0, y: 10 },
+      { x: 0, y: 5 },
+    ])
+    expect(arcB.map((p) => p.point)).toEqual([
+      { x: 0, y: 5 },
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 5 },
+    ])
+  })
+
+  it('round-trips: split by line -> merge (stitch) -> split at the seam vertices -> back to the original two halves', () => {
+    const square = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }]
+    const [loopA, loopB] = splitClosedPolygonByLine(square, { x: -5, y: 5 }, { x: 15, y: 5 })
+    const merged = stitchMergeAtSharedVertices(
+      loopA.map((p) => ({ point: p, cornerRadius: 0 })),
+      loopB.map((p) => ({ point: p, cornerRadius: 0 }))
+    )
+
+    const seamIndices = [
+      merged.findIndex((p) => p.point.x === 10 && p.point.y === 5),
+      merged.findIndex((p) => p.point.x === 0 && p.point.y === 5),
+    ]
+    const [arcA, arcB] = splitClosedPieceAtVertexIndices(merged, ...seamIndices)
+    expect(arcA.map((p) => p.point)).toEqual(loopA)
+    expect(arcB.map((p) => p.point)).toEqual(loopB)
+  })
+
+  it('preserves cornerRadius on surviving vertices instead of regenerating them', () => {
+    const shape = [{ ...v(0, 0), cornerRadius: 5 }, v(10, 0), v(10, 10), v(0, 10)]
+    const [arcA] = splitClosedPieceAtVertexIndices(shape, 0, 2)
+    expect(arcA.find((p) => p.point.x === 0 && p.point.y === 0).cornerRadius).toBe(5)
+  })
+
+  it('returns null for equal or out-of-range indices', () => {
+    const shape = [v(0, 0), v(10, 0), v(10, 10), v(0, 10)]
+    expect(splitClosedPieceAtVertexIndices(shape, 1, 1)).toBeNull()
+    expect(splitClosedPieceAtVertexIndices(shape, 0, 99)).toBeNull()
+  })
+
+  it('returns null when the two indices are adjacent (one side would be a degenerate sliver)', () => {
+    const shape = [v(0, 0), v(10, 0), v(10, 10), v(0, 10)]
+    expect(splitClosedPieceAtVertexIndices(shape, 0, 1)).toBeNull()
   })
 })

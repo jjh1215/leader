@@ -12,21 +12,10 @@
 // the two pieces don't share exactly 2 vertices -- e.g. two independently
 // drawn overlapping shapes that were never split from one another.
 
+import { arcBetween } from './arcBetween.js'
+
 function pointsEqual(a, b, eps = 1e-6) {
   return Math.hypot(a.x - b.x, a.y - b.y) < eps
-}
-
-// Walks `vertices` (a closed loop) forward from index iStart to iEnd, wrapping.
-function arcBetween(vertices, iStart, iEnd) {
-  const n = vertices.length
-  const arc = []
-  let i = iStart
-  while (true) {
-    arc.push(vertices[i])
-    if (i === iEnd) break
-    i = (i + 1) % n
-  }
-  return arc
 }
 
 // The "real" arc between two shared points is whichever of the two possible
