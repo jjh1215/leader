@@ -1,14 +1,20 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createPattern, deletePattern, listPatterns } from '../api/patternsApi'
+import { readStoredPresets } from '../editor/stitchPresetsStorage.js'
 import Button from '../ui/Button.jsx'
 
-const EMPTY_CONTENT = {
-  pieces: [],
-  stitchPatternDefs: [],
-  stitchLines: [],
-  offsetPaths: [],
-  internalLines: [],
+function emptyContent() {
+  return {
+    pieces: [],
+    // Seeded from whatever presets were last used in any pattern, so a
+    // fresh pattern doesn't start with an empty stitch preset list every
+    // time -- see stitchPresetsStorage.js.
+    stitchPatternDefs: readStoredPresets(),
+    stitchLines: [],
+    offsetPaths: [],
+    internalLines: [],
+  }
 }
 
 function PatternListPage() {
@@ -24,7 +30,7 @@ function PatternListPage() {
 
   async function handleCreate() {
     try {
-      const created = await createPattern({ name: '새 패턴', content: EMPTY_CONTENT })
+      const created = await createPattern({ name: '새 패턴', content: emptyContent() })
       navigate(`/patterns/${created.id}`)
     } catch (e) {
       setError(e.message)

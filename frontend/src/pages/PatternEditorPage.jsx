@@ -9,7 +9,18 @@ import HintOverlay from '../editor/HintOverlay.jsx'
 import PieceListSidebar from '../editor/PieceListSidebar.jsx'
 import { useScreenCalibration } from '../calibration/useScreenCalibration.js'
 import CalibrationModal from '../calibration/CalibrationModal.jsx'
+import { writeStoredPresets } from '../editor/stitchPresetsStorage.js'
 import Button from '../ui/Button.jsx'
+
+const HINTS_STORAGE_KEY = 'leader:showHints'
+
+function readShowHints() {
+  try {
+    return localStorage.getItem(HINTS_STORAGE_KEY) !== 'off'
+  } catch {
+    return true
+  }
+}
 
 function PatternEditorPage() {
   const { id } = useParams()
@@ -22,6 +33,20 @@ function PatternEditorPage() {
   const calibration = useScreenCalibration()
   const [actualSize, setActualSize] = useState(false)
   const [showCalibrationModal, setShowCalibrationModal] = useState(false)
+  const [showHints, setShowHints] = useState(readShowHints)
+
+  function toggleHints() {
+    setShowHints((v) => {
+      const next = !v
+      try {
+        localStorage.setItem(HINTS_STORAGE_KEY, next ? 'on' : 'off')
+      } catch {
+        // localStorage unavailable (private mode etc.) -- toggle still works
+        // for this page load, just won't persist across reloads.
+      }
+      return next
+    })
+  }
 
   useEffect(() => {
     getPattern(id)
@@ -32,6 +57,16 @@ function PatternEditorPage() {
       })
       .catch((e) => setError(e.message))
   }, [id])
+
+  // Mirrors this pattern's stitch pattern presets into localStorage so a
+  // brand new pattern can seed from them (see PatternListPage) instead of
+  // starting with none every time. Guarded on `loaded`: before the fetch
+  // resolves, state.document is still the reducer's empty initial value,
+  // and writing that would wipe out whatever was stored already.
+  useEffect(() => {
+    if (!loaded) return
+    writeStoredPresets(state.document.stitchPatternDefs)
+  }, [loaded, state.document.stitchPatternDefs])
 
   useEffect(() => {
     function handleGlobalKeyDown(e) {
@@ -99,6 +134,8 @@ function PatternEditorPage() {
           onToggleActualSize={() => setActualSize((v) => !v)}
           calibrated={calibration.calibrated}
           onOpenCalibration={() => setShowCalibrationModal(true)}
+          showHints={showHints}
+          onToggleHints={toggleHints}
         />
       </div>
 
@@ -111,7 +148,7 @@ function PatternEditorPage() {
             pxPerMm={calibration.pxPerMm}
           />
           <DimensionPanel state={state} dispatch={dispatch} />
-          <HintOverlay state={state} />
+          {showHints && <HintOverlay state={state} />}
         </div>
         <PieceListSidebar state={state} dispatch={dispatch} />
       </div>

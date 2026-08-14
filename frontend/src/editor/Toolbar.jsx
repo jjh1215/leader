@@ -60,7 +60,16 @@ function Divider() {
   return <span style={{ borderLeft: '1px solid #ddd', height: '2.2rem' }} />
 }
 
-function Toolbar({ state, dispatch, actualSize, onToggleActualSize, calibrated, onOpenCalibration }) {
+function Toolbar({
+  state,
+  dispatch,
+  actualSize,
+  onToggleActualSize,
+  calibrated,
+  onOpenCalibration,
+  showHints,
+  onToggleHints,
+}) {
   const { toolMode, document, selectedPieceIds, past, future } = state
 
   const twoSelected =
@@ -222,6 +231,16 @@ function Toolbar({ state, dispatch, actualSize, onToggleActualSize, calibrated, 
         disabled={!calibrated}
         onClick={onToggleActualSize}
         title="모니터에 자를 대고 확인할 수 있도록 실제 치수 그대로 화면에 표시합니다"
+      />
+
+      <Divider />
+
+      <ToolButton
+        icon="💬"
+        label="툴팁"
+        active={showHints}
+        onClick={onToggleHints}
+        title="화면 좌측 하단에 뜨는 사용법 안내를 켜고 끕니다"
       />
     </div>
   )

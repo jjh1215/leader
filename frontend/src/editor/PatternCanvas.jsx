@@ -12,6 +12,20 @@ const HIT_RADIUS_PX = 8
 const MIN_SHAPE_DRAG_MM = 0.5 // ignore accidental clicks-without-drag for rect/line tools
 const DEFAULT_VIEWBOX = { x: -20, y: -20, width: 240, height: 240 }
 
+// Local tangent direction (degrees) of the stitch path at hole `index`,
+// via a central difference against its neighbors -- used to orient the
+// "diagonal" stitch-style marker relative to the seam itself rather than a
+// fixed screen angle, which looked wrong on anything but a horizontal edge
+// (a diamond rotated a flat 45° in screen space doesn't track the line at
+// all once the piece/edge is at an angle).
+function holeTangentAngleDeg(holes, index, closed) {
+  const n = holes.length
+  if (n < 2) return 0
+  const next = closed ? holes[(index + 1) % n] : holes[Math.min(index + 1, n - 1)]
+  const prev = closed ? holes[(index - 1 + n) % n] : holes[Math.max(index - 1, 0)]
+  return (Math.atan2(next.y - prev.y, next.x - prev.x) * 180) / Math.PI
+}
+
 function Grid({ viewBox }) {
   const lines = []
   const step = 10 // mm
@@ -756,6 +770,30 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
                     transform={`rotate(45 ${h.x} ${h.y})`}
                     fill="#b03060"
                   />
+                ) : def.style === 'slash' ? (
+                  (() => {
+                    // A genuine slanted mark (unlike the diamond above, this
+                    // one isn't rotationally symmetric) -- leaning 45° off
+                    // the seam's own local direction, not a fixed screen
+                    // angle, so it stays a consistent "diagonal relative to
+                    // the stitching" on edges at any angle, not just
+                    // horizontal ones.
+                    const angleRad = ((holeTangentAngleDeg(holes, hi, holesClosed) + 45) * Math.PI) / 180
+                    const dx = Math.cos(angleRad) * holeRadius * 1.4
+                    const dy = Math.sin(angleRad) * holeRadius * 1.4
+                    return (
+                      <line
+                        key={`${li}-${hi}`}
+                        x1={h.x - dx}
+                        y1={h.y - dy}
+                        x2={h.x + dx}
+                        y2={h.y + dy}
+                        stroke="#b03060"
+                        strokeWidth={holeRadius * 0.6}
+                        strokeLinecap="round"
+                      />
+                    )
+                  })()
                 ) : (
                   <circle key={`${li}-${hi}`} cx={h.x} cy={h.y} r={holeRadius} fill="#b03060" />
                 )
