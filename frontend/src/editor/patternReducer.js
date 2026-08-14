@@ -24,9 +24,17 @@ function cloneDoc(doc) {
   return JSON.parse(JSON.stringify(doc))
 }
 
+// Fills in any document-level arrays missing from `document` (e.g. a pattern
+// saved before `internalLines` -- or any future field -- existed) with
+// emptyDocument()'s defaults, so loading an older saved pattern doesn't
+// crash on a missing array instead of just treating it as "none yet."
+function normalizeDocument(document) {
+  return { ...emptyDocument(), ...document }
+}
+
 function initState(document) {
   return {
-    document,
+    document: normalizeDocument(document),
     past: [],
     future: [],
     toolMode: 'select',

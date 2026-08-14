@@ -8,6 +8,7 @@ const EMPTY_CONTENT = {
   stitchPatternDefs: [],
   stitchLines: [],
   offsetPaths: [],
+  internalLines: [],
 }
 
 function PatternListPage() {

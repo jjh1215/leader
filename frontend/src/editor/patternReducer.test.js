@@ -533,4 +533,12 @@ describe('patternReducer', () => {
       expect(state.document.internalLines).toHaveLength(0)
     })
   })
+
+  describe('LOAD', () => {
+    it('normalizes a document missing newer fields (e.g. a pattern saved before internalLines existed)', () => {
+      const legacyDocument = { pieces: [], stitchPatternDefs: [], stitchLines: [], offsetPaths: [] }
+      const state = patternReducer(undefined, { type: 'LOAD', document: legacyDocument })
+      expect(state.document.internalLines).toEqual([])
+    })
+  })
 })
