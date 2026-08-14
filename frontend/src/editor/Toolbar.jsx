@@ -3,19 +3,21 @@ import { insertLineIntersectionPoints, splitClosedPolygonByLine } from './geomet
 
 const baseButtonStyle = {
   display: 'inline-flex',
+  flexDirection: 'column',
   alignItems: 'center',
   justifyContent: 'center',
-  width: '2.25rem',
-  height: '2.25rem',
-  padding: 0,
+  gap: '0.15rem',
+  minWidth: '2.6rem',
+  padding: '0.3rem 0.4rem',
   border: '1px solid #d6d6d6',
   borderRadius: 6,
   background: '#fff',
   color: '#333',
-  fontSize: '1.1rem',
-  lineHeight: 1,
   cursor: 'pointer',
 }
+
+const iconStyle = { fontSize: '1.1rem', lineHeight: 1 }
+const labelStyle = { fontSize: '0.6rem', lineHeight: 1, whiteSpace: 'nowrap' }
 
 const activeButtonStyle = {
   background: '#1e6fe0',
@@ -28,30 +30,34 @@ const disabledButtonStyle = {
   cursor: 'default',
 }
 
-// Icon-only button -- the visible label was replaced by a native tooltip
-// (title attribute) combining the name and description, so hovering still
-// tells you what it does without every button's text crowding the row.
-// `aria-label` keeps the name available to screen readers.
+// Icon on top, a small label underneath -- icons alone turned out too hard
+// to tell apart, but every button sharing this same fixed layout (icon row
+// + tiny label row) means the label doesn't change the toolbar's height no
+// matter how long a given button's text is, so it still can't push the
+// canvas below it around. The title tooltip (name + description) stays for
+// the extra detail that doesn't fit at this size.
 function ToolButton({ icon, label, active, disabled, onClick, title }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       title={title ? `${label} — ${title}` : label}
-      aria-label={label}
       style={{
         ...baseButtonStyle,
         ...(active ? activeButtonStyle : {}),
         ...(disabled ? disabledButtonStyle : {}),
       }}
     >
-      <span aria-hidden="true">{icon}</span>
+      <span aria-hidden="true" style={iconStyle}>
+        {icon}
+      </span>
+      <span style={labelStyle}>{label}</span>
     </button>
   )
 }
 
 function Divider() {
-  return <span style={{ borderLeft: '1px solid #ddd', height: '1.5rem' }} />
+  return <span style={{ borderLeft: '1px solid #ddd', height: '2.2rem' }} />
 }
 
 function Toolbar({ state, dispatch, actualSize, onToggleActualSize, calibrated, onOpenCalibration }) {
