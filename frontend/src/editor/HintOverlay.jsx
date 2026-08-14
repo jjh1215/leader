@@ -30,8 +30,8 @@ function hintFor(state) {
       return '드래그해서 직선 그리기 (Shift=직각 스냅) · 우측 하단에서 치수로도 그릴 수 있음'
     case 'select':
       return selectedPieceIds.length > 0
-        ? `Shift+클릭으로 여러 조각 선택 · ${selectedPieceIds.length}개 선택됨`
-        : null
+        ? `Shift+클릭/드래그로 여러 조각 선택 · Delete로 삭제 · ${selectedPieceIds.length}개 선택됨`
+        : '빈 곳에서 드래그하면 여러 조각을 한번에 선택합니다'
     default:
       return null
   }

@@ -249,4 +249,49 @@ describe('patternReducer', () => {
       expect(new Set(ys)).toEqual(new Set([0, 20]))
     })
   })
+
+  describe('SELECT_PIECES', () => {
+    it('replaces the selection by default, or unions with it additively', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: 0, y: 0 }, end: { x: 1, y: 0 } })
+      const idA = state.document.pieces[0].id
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: 2, y: 0 }, end: { x: 3, y: 0 } })
+      const idB = state.document.pieces[1].id
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: 4, y: 0 }, end: { x: 5, y: 0 } })
+      const idC = state.document.pieces[2].id
+
+      state = patternReducer(state, { type: 'SELECT_PIECES', pieceIds: [idA, idB], additive: false })
+      expect(state.selectedPieceIds).toEqual([idA, idB])
+
+      state = patternReducer(state, { type: 'SELECT_PIECES', pieceIds: [idB, idC], additive: true })
+      expect(new Set(state.selectedPieceIds)).toEqual(new Set([idA, idB, idC]))
+    })
+  })
+
+  describe('DELETE_PIECES', () => {
+    it('removes all listed pieces and their dependents in a single history step', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: 0, y: 0 }, end: { x: 1, y: 0 } })
+      const idA = state.document.pieces[0].id
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: 2, y: 0 }, end: { x: 3, y: 0 } })
+      const idB = state.document.pieces[1].id
+      state = patternReducer(state, {
+        type: 'ADD_OFFSET_PATH',
+        offsetPath: { id: 'o1', name: 'o', sourcePieceId: idA, offsetDistance: 5 },
+      })
+      state = patternReducer(state, { type: 'SELECT_PIECES', pieceIds: [idA, idB], additive: false })
+
+      const before = state
+      state = patternReducer(state, { type: 'DELETE_PIECES', pieceIds: [idA, idB] })
+      expect(state.document.pieces).toHaveLength(0)
+      expect(state.document.offsetPaths).toHaveLength(0)
+      expect(state.selectedPieceIds).toEqual([])
+
+      // one undo restores both pieces (and the offset path) at once
+      state = patternReducer(state, { type: 'UNDO' })
+      expect(state.document.pieces).toHaveLength(2)
+      expect(state.document.offsetPaths).toHaveLength(1)
+      expect(state).not.toBe(before) // sanity: undo landed on a fresh object, not a no-op
+    })
+  })
 })

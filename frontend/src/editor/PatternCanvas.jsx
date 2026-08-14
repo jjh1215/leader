@@ -60,6 +60,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
   const [panStart, setPanStart] = useState(null)
   const [shapeDrag, setShapeDrag] = useState(null) // transient rect/line preview: { start, end }
   const [hoverPoint, setHoverPoint] = useState(null) // rubber-band preview for the draw-line pen tool
+  const [marquee, setMarquee] = useState(null) // transient drag-select box: { start, end, additive }
 
   const { document, toolMode, activePieceId, selection, selectedPieceIds } = state
 
@@ -112,6 +113,16 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     return best
   }
 
+  // Marquee/drag-select: any piece with at least one vertex inside the box
+  // (the common "touch" rubber-band behavior, not strict full-enclosure).
+  function piecesTouchingRect(minX, minY, maxX, maxY) {
+    return document.pieces
+      .filter((piece) =>
+        piece.vertices.some((v) => v.point.x >= minX && v.point.x <= maxX && v.point.y >= minY && v.point.y <= maxY)
+      )
+      .map((p) => p.id)
+  }
+
   function handlePointerDown(e) {
     let point = toDoc(e)
 
@@ -152,10 +163,11 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       const pieceId = findNearestPiece(point)
       if (pieceId) {
         dispatch({ type: 'SELECT_PIECE', pieceId, additive: e.shiftKey })
-      } else if (!e.shiftKey) {
-        dispatch({ type: 'CLEAR_SELECTION' })
-        dispatch({ type: 'CLEAR_PIECE_SELECTION' })
+        return
       }
+      // Empty space: start a marquee drag, resolved on pointerup (a drag too
+      // small to be intentional is treated as a plain deselect-click instead).
+      setMarquee({ start: point, end: point, additive: e.shiftKey })
       return
     }
 
@@ -171,6 +183,8 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       const raw = toDoc(e)
       const constrained = e.shiftKey ? snapOrthogonal(shapeDrag.start, raw) : raw
       setShapeDrag({ ...shapeDrag, end: snapToNearbyVertex(constrained) })
+    } else if (marquee) {
+      setMarquee({ ...marquee, end: toDoc(e) })
     } else if (panStart) {
       const rect = svgRef.current.getBoundingClientRect()
       const dxMm = (e.clientX - panStart.clientX) * (panStart.viewBox.width / rect.width)
@@ -208,6 +222,26 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       }
       setShapeDrag(null)
     }
+    if (marquee) {
+      const dist = Math.hypot(marquee.end.x - marquee.start.x, marquee.end.y - marquee.start.y)
+      if (dist >= MIN_SHAPE_DRAG_MM) {
+        const minX = Math.min(marquee.start.x, marquee.end.x)
+        const maxX = Math.max(marquee.start.x, marquee.end.x)
+        const minY = Math.min(marquee.start.y, marquee.end.y)
+        const maxY = Math.max(marquee.start.y, marquee.end.y)
+        const ids = piecesTouchingRect(minX, minY, maxX, maxY)
+        if (ids.length > 0) {
+          dispatch({ type: 'SELECT_PIECES', pieceIds: ids, additive: marquee.additive })
+        } else if (!marquee.additive) {
+          dispatch({ type: 'CLEAR_SELECTION' })
+          dispatch({ type: 'CLEAR_PIECE_SELECTION' })
+        }
+      } else if (!marquee.additive) {
+        dispatch({ type: 'CLEAR_SELECTION' })
+        dispatch({ type: 'CLEAR_PIECE_SELECTION' })
+      }
+      setMarquee(null)
+    }
     setPanStart(null)
   }
 
@@ -231,8 +265,12 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
   }
 
   function handleKeyDown(e) {
-    if ((e.key === 'Delete' || e.key === 'Backspace') && selection) {
-      dispatch({ type: 'DELETE_VERTEX', pieceId: selection.pieceId, vertexId: selection.vertexId })
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (selection) {
+        dispatch({ type: 'DELETE_VERTEX', pieceId: selection.pieceId, vertexId: selection.vertexId })
+      } else if (selectedPieceIds.length > 0) {
+        dispatch({ type: 'DELETE_PIECES', pieceIds: selectedPieceIds })
+      }
     } else if (e.key === 'Escape' && toolMode === 'draw-line') {
       dispatch({ type: 'END_OPEN_PATH' })
       setHoverPoint(null)
@@ -411,6 +449,20 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
             vectorEffect="non-scaling-stroke"
           />
         ))}
+
+      {marquee && (
+        <rect
+          x={Math.min(marquee.start.x, marquee.end.x)}
+          y={Math.min(marquee.start.y, marquee.end.y)}
+          width={Math.abs(marquee.end.x - marquee.start.x)}
+          height={Math.abs(marquee.end.y - marquee.start.y)}
+          fill="rgba(30,111,224,0.06)"
+          stroke="#1e6fe0"
+          strokeDasharray="2 2"
+          strokeWidth={1}
+          vectorEffect="non-scaling-stroke"
+        />
+      )}
 
       {toolMode === 'draw-line' &&
         activePieceId &&

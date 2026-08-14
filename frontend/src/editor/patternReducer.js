@@ -149,6 +149,17 @@ export function patternReducer(state, action) {
       return { ...state, selection: null, selectedPieceIds }
     }
 
+    // Marquee/drag-select result: a set of piece ids all at once. Unlike
+    // SELECT_PIECE (single click), this always adds/replaces -- it doesn't
+    // toggle pieces back off, matching standard rubber-band-select behavior.
+    case 'SELECT_PIECES': {
+      const { pieceIds, additive } = action
+      const selectedPieceIds = additive
+        ? Array.from(new Set([...state.selectedPieceIds, ...pieceIds]))
+        : pieceIds
+      return { ...state, selection: null, selectedPieceIds }
+    }
+
     case 'CLEAR_PIECE_SELECTION':
       return { ...state, selectedPieceIds: [] }
 
@@ -298,6 +309,29 @@ export function patternReducer(state, action) {
         toolMode: wasActive ? 'select' : nextState.toolMode,
         selection: hadSelection ? null : nextState.selection,
         selectedPieceIds: nextState.selectedPieceIds.filter((id) => id !== action.pieceId),
+      }
+    }
+
+    // Bulk variant of DELETE_PIECE -- used for Delete-key removal of a
+    // whole-piece selection (which may hold up to 2 pieces at once). Kept as
+    // one commit so undo restores every deleted piece in a single step.
+    case 'DELETE_PIECES': {
+      const { pieceIds } = action
+      const nextDoc = {
+        ...state.document,
+        pieces: state.document.pieces.filter((p) => !pieceIds.includes(p.id)),
+        stitchLines: state.document.stitchLines.filter((s) => !pieceIds.includes(s.sourcePieceId)),
+        offsetPaths: state.document.offsetPaths.filter((o) => !pieceIds.includes(o.sourcePieceId)),
+      }
+      const nextState = commit(state, nextDoc)
+      const wasActive = pieceIds.includes(state.activePieceId)
+      const hadSelection = state.selection && pieceIds.includes(state.selection.pieceId)
+      return {
+        ...nextState,
+        activePieceId: wasActive ? null : nextState.activePieceId,
+        toolMode: wasActive ? 'select' : nextState.toolMode,
+        selection: hadSelection ? null : nextState.selection,
+        selectedPieceIds: nextState.selectedPieceIds.filter((id) => !pieceIds.includes(id)),
       }
     }
 
