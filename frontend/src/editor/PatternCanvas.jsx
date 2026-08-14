@@ -41,16 +41,23 @@ function holeTangentAngleDeg(holes, index, closed) {
   return (Math.atan2(next.y - cur.y, next.x - cur.x) * 180) / Math.PI
 }
 
-function Grid({ viewBox }) {
+// Minor lines every 10mm always; major lines every 5 minor lines (50mm)
+// normally, or every 10 (100mm/10cm) in "실물 크기로 보기" mode, matching a
+// real ruler's cm/mm markings since that's the whole point of that mode.
+// Both are counted from absolute x=0/y=0 (Math.round(x/step) % majorEvery),
+// not from the current viewBox's pan position, so which lines are major
+// never shifts as the user pans/zooms around.
+function Grid({ viewBox, actualSize }) {
   const lines = []
   const step = 10 // mm
+  const majorEvery = actualSize ? 10 : 5
   const startX = Math.floor(viewBox.x / step) * step
   const endX = viewBox.x + viewBox.width
   const startY = Math.floor(viewBox.y / step) * step
   const endY = viewBox.y + viewBox.height
 
   for (let x = startX; x <= endX; x += step) {
-    const major = Math.round(x / step) % 5 === 0
+    const major = Math.round(x / step) % majorEvery === 0
     lines.push(
       <line
         key={`v${x}`}
@@ -65,7 +72,7 @@ function Grid({ viewBox }) {
     )
   }
   for (let y = startY; y <= endY; y += step) {
-    const major = Math.round(y / step) % 5 === 0
+    const major = Math.round(y / step) % majorEvery === 0
     lines.push(
       <line
         key={`h${y}`}
@@ -523,6 +530,13 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
 
   function handleWheel(e) {
     e.preventDefault()
+    // "실물 크기로 보기" is meant to be a pinned, calibrated 1:1 physical
+    // scale -- letting the wheel zoom the viewBox wouldn't actually change
+    // the on-screen physical scale (the SVG's CSS size is recomputed as
+    // viewBox * pxPerMm either way), just how much of the document is
+    // framed, which reads as the canvas confusingly growing/shrinking for
+    // no reason. Disabled outright in this mode instead.
+    if (actualSize) return
     const scale = e.deltaY > 0 ? 1.1 : 0.9
     const point = toDoc(e)
     setViewBox((vb) => ({
@@ -657,7 +671,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       onDoubleClick={handleDoubleClick}
       onKeyDown={handleKeyDown}
     >
-      <Grid viewBox={viewBox} />
+      <Grid viewBox={viewBox} actualSize={actualSize} />
 
       {document.pieces.map((piece) => {
         const vertices = piece.vertices.map((v) => ({ ...v, point: liveVertexPoint(piece.id, v) }))

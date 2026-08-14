@@ -90,13 +90,14 @@ function CalibrationModal({ onClose, onCalibrate }) {
 
           <div style={{ marginTop: '1rem', overflowX: 'auto', paddingBottom: '3rem' }}>
             <div style={{ position: 'relative', width: barPx, height: 12, background: '#e0781e' }}>
-              {/* Precise edge marker -- nothing else touches this, so the bar's
-                  true measurable end is always unambiguous when lining it up
-                  against a real object. */}
-              <div style={{ position: 'absolute', right: -1, top: -6, width: 2, height: 24, background: '#333' }} />
+              {/* Precise edge marker -- its left edge starts exactly where the
+                  orange bar ends, so it never covers any of the bar's true
+                  tip (the actual reference point being aligned against a
+                  real object). */}
+              <div style={{ position: 'absolute', left: barPx, top: -6, width: 2, height: 24, background: '#333' }} />
               {/* Thin guide down to the handle, kept well clear of the bar so
                   it never obscures the edge marker above. */}
-              <div style={{ position: 'absolute', right: -0.5, top: 12, width: 1, height: 28, background: '#ccc' }} />
+              <div style={{ position: 'absolute', left: barPx, top: 12, width: 1, height: 28, background: '#ccc' }} />
               <div
                 onPointerDown={handleDragStart}
                 onKeyDown={handleHandleKeyDown}
