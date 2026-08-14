@@ -1,0 +1,18 @@
+/* Minimal reset -- the app has none, so the browser's default body margin
+   (usually 8px) made the editor page's `height: 100vh` wrapper taller than
+   the actual viewport, producing a stray page-level scrollbar. Scrolling
+   near that edge shifted the whole fixed layout instead of just zooming
+   the canvas. Kept intentionally small: PatternListPage relies on normal
+   page scrolling for a long pattern list, so this must not force overflow
+   hidden globally -- only remove the margin that was pushing things past
+   100vh. */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+}
