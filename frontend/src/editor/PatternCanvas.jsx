@@ -473,12 +473,39 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     }))
   }
 
+  // Fits the viewBox to every piece's bounding box (10% padding, or a flat
+  // 10mm if the content has zero width/height -- a single point or a
+  // perfectly axis-aligned line). Falls back to the default viewBox when
+  // there's nothing drawn yet.
+  function fitToContent() {
+    const points = document.pieces.flatMap((p) => p.vertices.map((v) => v.point))
+    if (points.length === 0) {
+      setViewBox(DEFAULT_VIEWBOX)
+      return
+    }
+    const minX = Math.min(...points.map((p) => p.x))
+    const maxX = Math.max(...points.map((p) => p.x))
+    const minY = Math.min(...points.map((p) => p.y))
+    const maxY = Math.max(...points.map((p) => p.y))
+    const width = maxX - minX
+    const height = maxY - minY
+    const padding = Math.max(width, height) * 0.1 || 10
+    setViewBox({
+      x: minX - padding,
+      y: minY - padding,
+      width: width + padding * 2,
+      height: height + padding * 2,
+    })
+  }
+
   function handleDoubleClick() {
     if (toolMode === 'draw-line') {
       dispatch({ type: 'END_OPEN_PATH' })
       setHoverPoint(null)
       setHoverDock(null)
+      return
     }
+    fitToContent()
   }
 
   function handleKeyDown(e) {
