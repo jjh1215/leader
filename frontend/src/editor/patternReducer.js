@@ -591,6 +591,32 @@ export function patternReducer(state, action) {
       }
     }
 
+    // Rigid-body translate of one or more whole pieces by (dx, dy) -- used
+    // for both drag-to-move (the interior-drag gesture) and typed X/Y
+    // position edits. A no-op for a zero delta so a plain click (no actual
+    // drag) doesn't push a pointless history entry. Clears `dock` on every
+    // moved vertex: a bulk rigid-body move isn't the same gesture as
+    // "slide this point along its dock target," so treating it as an
+    // explicit edit (same precedent as SET_RECT_DIMENSIONS/SET_LINE_DIMENSIONS)
+    // avoids a docked point fighting the drag by snapping back next commit.
+    case 'TRANSLATE_PIECES': {
+      const { pieceIds, dx, dy } = action
+      if (dx === 0 && dy === 0) return state
+      const nextPieces = state.document.pieces.map((p) =>
+        !pieceIds.includes(p.id)
+          ? p
+          : {
+              ...p,
+              vertices: p.vertices.map((v) => ({
+                ...v,
+                point: { x: v.point.x + dx, y: v.point.y + dy },
+                dock: null,
+              })),
+            }
+      )
+      return commit(state, { ...state.document, pieces: nextPieces })
+    }
+
     case 'RENAME_PIECE': {
       const nextPieces = state.document.pieces.map((p) =>
         p.id === action.pieceId ? { ...p, name: action.name } : p

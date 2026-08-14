@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { distanceToPolyline } from './hitTest.js'
+import { distanceToPolyline, pointInPolygon } from './hitTest.js'
 
 describe('distanceToPolyline', () => {
   const square = [
@@ -24,5 +24,26 @@ describe('distanceToPolyline', () => {
     const openDist = distanceToPolyline({ x: 0, y: 5 }, square, false)
     expect(closedDist).toBeCloseTo(0, 6)
     expect(openDist).toBeGreaterThan(4)
+  })
+})
+
+describe('pointInPolygon', () => {
+  const square = [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 10, y: 10 },
+    { x: 0, y: 10 },
+  ]
+
+  it('is true for a point in the interior', () => {
+    expect(pointInPolygon({ x: 5, y: 5 }, square)).toBe(true)
+  })
+
+  it('is false for a point clearly outside', () => {
+    expect(pointInPolygon({ x: 20, y: 20 }, square)).toBe(false)
+  })
+
+  it('is false for a point outside but aligned with an edge', () => {
+    expect(pointInPolygon({ x: -5, y: 5 }, square)).toBe(false)
   })
 })

@@ -9,6 +9,12 @@ function lineLengthAngle(piece) {
   return { length: Math.hypot(dx, dy), angleDeg: (Math.atan2(dy, dx) * 180) / Math.PI }
 }
 
+function pieceBoundingBoxMin(piece) {
+  const xs = piece.vertices.map((v) => v.point.x)
+  const ys = piece.vertices.map((v) => v.point.y)
+  return { minX: Math.min(...xs), minY: Math.min(...ys) }
+}
+
 function num(value, fallback = 0) {
   const n = Number(value)
   return Number.isFinite(n) ? n : fallback
@@ -125,13 +131,38 @@ function DimensionPanel({ state, dispatch }) {
     singleSelectedPiece && singleSelectedPiece.closed ? isAxisAlignedRect(singleSelectedPiece.vertices) : null
 
   const showDrawByDimension = toolMode === 'rect' || toolMode === 'line'
+  const positionMin = toolMode === 'select' && singleSelectedPiece ? pieceBoundingBoxMin(singleSelectedPiece) : null
 
-  if (!selectedVertex && !selectedLinePiece && !selectedRect && !showDrawByDimension) {
+  if (!selectedVertex && !selectedLinePiece && !selectedRect && !showDrawByDimension && !positionMin) {
     return null
   }
 
   return (
     <div style={panelStyle}>
+      {positionMin && (
+        <>
+          <strong>조각 위치</strong>
+          <Field
+            label="X (mm)"
+            step={0.5}
+            value={Number(positionMin.minX.toFixed(3))}
+            onChange={(e) => {
+              const dx = num(e.target.value, positionMin.minX) - positionMin.minX
+              dispatch({ type: 'TRANSLATE_PIECES', pieceIds: [singleSelectedPiece.id], dx, dy: 0 })
+            }}
+          />
+          <Field
+            label="Y (mm)"
+            step={0.5}
+            value={Number(positionMin.minY.toFixed(3))}
+            onChange={(e) => {
+              const dy = num(e.target.value, positionMin.minY) - positionMin.minY
+              dispatch({ type: 'TRANSLATE_PIECES', pieceIds: [singleSelectedPiece.id], dx: 0, dy })
+            }}
+          />
+        </>
+      )}
+
       {selectedVertex && (
         <>
           <strong>점 위치</strong>

@@ -1,11 +1,11 @@
 import { useRef, useState } from 'react'
 import { flattenToPolygon, verticesToPathD } from './geometry/fillet.js'
-import { distanceToPolyline } from './geometry/hitTest.js'
+import { distanceToPolyline, pointInPolygon } from './geometry/hitTest.js'
 import { projectPointToPolyline } from './geometry/edgeDock.js'
 import { offsetPolygon } from './geometry/offset.js'
 import { pointsToPathD } from './geometry/path.js'
 import { pxToMm, screenToDocPoint } from './geometry/screenToDoc.js'
-import { snapOrthogonal } from './geometry/snap.js'
+import { projectPointOntoLine, snapOrthogonal } from './geometry/snap.js'
 import { placeStitchHoles } from './geometry/stitch.js'
 
 const HIT_RADIUS_PX = 8
@@ -62,6 +62,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
   const [hoverPoint, setHoverPoint] = useState(null) // rubber-band preview for the draw-line pen tool
   const [hoverDock, setHoverDock] = useState(null) // dock the hoverPoint is currently snapped to, if any
   const [marquee, setMarquee] = useState(null) // transient drag-select box: { start, end, additive }
+  const [pieceDrag, setPieceDrag] = useState(null) // whole-piece move: { pieceIds, start, current }
 
   const { document, toolMode, activePieceId, selection, selectedPieceIds } = state
 
@@ -137,6 +138,10 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     return { point, dock: null }
   }
 
+  // Hits a piece either by proximity to its edge (any piece) or by landing
+  // inside its filled interior (closed pieces only) -- the latter is what
+  // lets clicking/dragging anywhere inside a shape select or move it, not
+  // just its outline.
   function findNearestPiece(point) {
     const threshold = hitRadiusMm()
     let best = null
@@ -144,6 +149,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     for (const piece of document.pieces) {
       if (piece.vertices.length < 2) continue
       const poly = flattenToPolygon(piece.vertices, piece.closed)
+      if (piece.closed && pointInPolygon(point, poly)) return piece.id
       const d = distanceToPolyline(point, poly, piece.closed)
       if (d < bestDist) {
         bestDist = d
@@ -204,7 +210,20 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       }
       const pieceId = findNearestPiece(point)
       if (pieceId) {
-        dispatch({ type: 'SELECT_PIECE', pieceId, additive: e.shiftKey })
+        if (e.shiftKey) {
+          // Shift+click only builds/toggles the selection -- it doesn't also
+          // start a move, so it stays usable purely for multi-selecting.
+          dispatch({ type: 'SELECT_PIECE', pieceId, additive: true })
+          return
+        }
+        // Dragging a piece that's already part of the current selection
+        // moves the whole selected group together; dragging an unselected
+        // one selects just it first, matching standard design-tool behavior.
+        const alreadySelected = selectedPieceIds.includes(pieceId)
+        if (!alreadySelected) {
+          dispatch({ type: 'SELECT_PIECE', pieceId, additive: false })
+        }
+        setPieceDrag({ pieceIds: alreadySelected ? selectedPieceIds : [pieceId], start: point, current: point })
         return
       }
       // Empty space: start a marquee drag, resolved on pointerup (a drag too
@@ -220,10 +239,27 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
 
   function handlePointerMove(e) {
     if (dragVertex) {
+      let raw = toDoc(e)
+      // Shift: keep this point collinear with its two boundary neighbors --
+      // e.g. sliding an internal-line endpoint back and forth along the edge
+      // it sits on without letting it drift off that line and distort the
+      // outer silhouette.
+      if (e.shiftKey) {
+        const piece = document.pieces.find((p) => p.id === dragVertex.pieceId)
+        const index = piece?.vertices.findIndex((v) => v.id === dragVertex.vertexId) ?? -1
+        if (piece && index !== -1 && piece.vertices.length >= 3) {
+          const n = piece.vertices.length
+          const prev = piece.vertices[(index - 1 + n) % n]
+          const next = piece.vertices[(index + 1) % n]
+          raw = projectPointOntoLine(raw, prev.point, next.point)
+        }
+      }
       // Re-evaluate docking on every move (not just at drag-start): sliding
       // near an edge docks it live, dragging far enough away frees it again.
-      const snap = computeSnap(toDoc(e), { excludePieceId: dragVertex.pieceId })
+      const snap = computeSnap(raw, { excludePieceId: dragVertex.pieceId })
       setDragVertex({ ...dragVertex, point: snap.point, dock: snap.dock })
+    } else if (pieceDrag) {
+      setPieceDrag({ ...pieceDrag, current: toDoc(e) })
     } else if (shapeDrag) {
       const raw = toDoc(e)
       const constrained = e.shiftKey ? snapOrthogonal(shapeDrag.start, raw) : raw
@@ -261,6 +297,12 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         dock: dragVertex.dock,
       })
       setDragVertex(null)
+    }
+    if (pieceDrag) {
+      const dx = pieceDrag.current.x - pieceDrag.start.x
+      const dy = pieceDrag.current.y - pieceDrag.start.y
+      dispatch({ type: 'TRANSLATE_PIECES', pieceIds: pieceDrag.pieceIds, dx, dy })
+      setPieceDrag(null)
     }
     if (shapeDrag) {
       const dist = Math.hypot(shapeDrag.end.x - shapeDrag.start.x, shapeDrag.end.y - shapeDrag.start.y)
@@ -338,6 +380,25 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
 
   const vertexRadiusMm = viewBox.width / 130
 
+  const pieceDragOffset = pieceDrag
+    ? { dx: pieceDrag.current.x - pieceDrag.start.x, dy: pieceDrag.current.y - pieceDrag.start.y }
+    : null
+
+  // Live (in-progress-drag) point for a single vertex, reflecting whichever
+  // of the two drag gestures is touching it -- single-vertex drag, or a
+  // whole-piece move currently in progress. Shared by the outline/vertex
+  // rendering below and the internal-line rendering, so both stay in sync
+  // with the drag instead of only the outline updating live.
+  function liveVertexPoint(pieceId, vertex) {
+    if (dragVertex && dragVertex.pieceId === pieceId && dragVertex.vertexId === vertex.id) {
+      return dragVertex.point
+    }
+    if (pieceDragOffset && pieceDrag.pieceIds.includes(pieceId)) {
+      return { x: vertex.point.x + pieceDragOffset.dx, y: vertex.point.y + pieceDragOffset.dy }
+    }
+    return vertex.point
+  }
+
   // The "docking" visual cue: whichever point is currently live-snapped
   // (tracked explicitly via computeSnap's returned dock, not re-derived by
   // guessing from position -- an edge dock's point isn't necessarily equal
@@ -387,10 +448,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       <Grid viewBox={viewBox} />
 
       {document.pieces.map((piece) => {
-        const vertices =
-          dragVertex && piece.id === dragVertex.pieceId
-            ? piece.vertices.map((v) => (v.id === dragVertex.vertexId ? { ...v, point: dragVertex.point } : v))
-            : piece.vertices
+        const vertices = piece.vertices.map((v) => ({ ...v, point: liveVertexPoint(piece.id, v) }))
         const d = vertices.length >= 2 ? verticesToPathD(vertices, piece.closed) : ''
         const isActive = piece.id === activePieceId
         const isSelected = selectedPieceIds.includes(piece.id)
@@ -454,18 +512,39 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         const a = piece.vertices.find((v) => v.id === line.vertexIdA)
         const b = piece.vertices.find((v) => v.id === line.vertexIdB)
         if (!a || !b) return null
+
+        const aLive = liveVertexPoint(piece.id, a)
+        const bLive = liveVertexPoint(piece.id, b)
+        const isMoving = aLive !== a.point || bLive !== b.point
+
         return (
-          <line
-            key={line.id}
-            x1={a.point.x}
-            y1={a.point.y}
-            x2={b.point.x}
-            y2={b.point.y}
-            stroke="#7a4a1e"
-            strokeDasharray="5 3"
-            strokeWidth={1.2}
-            vectorEffect="non-scaling-stroke"
-          />
+          <g key={line.id}>
+            {isMoving && (
+              // "Before" ghost: the committed (pre-drag) position, so the
+              // original placement stays visible for reference while dragging.
+              <line
+                x1={a.point.x}
+                y1={a.point.y}
+                x2={b.point.x}
+                y2={b.point.y}
+                stroke="#7a4a1e"
+                strokeDasharray="2 3"
+                strokeWidth={0.8}
+                opacity={0.35}
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
+            <line
+              x1={aLive.x}
+              y1={aLive.y}
+              x2={bLive.x}
+              y2={bLive.y}
+              stroke="#7a4a1e"
+              strokeDasharray="5 3"
+              strokeWidth={1.2}
+              vectorEffect="non-scaling-stroke"
+            />
+          </g>
         )
       })}
 

@@ -30,8 +30,8 @@ function hintFor(state) {
       return '드래그해서 직선 그리기 (Shift=직각 스냅) · 다른 점/변 근처에 놓으면 도킹됨 · 우측 하단에서 치수로도 그릴 수 있음'
     case 'select':
       return selectedPieceIds.length > 0
-        ? `Shift+클릭/드래그로 여러 조각 선택 · Delete로 삭제 · 도형+선 선택 후 나누기/합치기/내부선 표시 · ${selectedPieceIds.length}개 선택됨`
-        : '빈 곳에서 드래그하면 여러 조각을 한번에 선택합니다'
+        ? `내부를 드래그하면 조각 전체 이동(Shift=이웃점과 직선 유지) · Shift+클릭/드래그로 여러 조각 선택 · Delete로 삭제 · 도형+선 선택 후 나누기/합치기/내부선 표시 · ${selectedPieceIds.length}개 선택됨`
+        : '조각을 클릭+드래그하면 이동 · 빈 곳에서 드래그하면 여러 조각을 한번에 선택합니다'
     default:
       return null
   }

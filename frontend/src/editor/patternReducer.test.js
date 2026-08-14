@@ -534,6 +534,60 @@ describe('patternReducer', () => {
     })
   })
 
+  describe('TRANSLATE_PIECES', () => {
+    it('shifts every vertex of the listed pieces by (dx, dy), leaving others untouched', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const idA = state.document.pieces[0].id
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 20, y: 20 }, corner2: { x: 30, y: 30 } })
+      const idB = state.document.pieces[1].id
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 50, y: 50 }, corner2: { x: 60, y: 60 } })
+      const idUntouched = state.document.pieces[2].id
+
+      state = patternReducer(state, { type: 'TRANSLATE_PIECES', pieceIds: [idA, idB], dx: 5, dy: -2 })
+
+      const byId = (id) => state.document.pieces.find((p) => p.id === id)
+      expect(byId(idA).vertices.map((v) => v.point)).toEqual([
+        { x: 5, y: -2 },
+        { x: 15, y: -2 },
+        { x: 15, y: 8 },
+        { x: 5, y: 8 },
+      ])
+      expect(byId(idB).vertices[0].point).toEqual({ x: 25, y: 18 })
+      expect(byId(idUntouched).vertices[0].point).toEqual({ x: 50, y: 50 })
+    })
+
+    it('is a no-op for a zero delta (no history entry pushed)', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const id = state.document.pieces[0].id
+      const before = state
+      state = patternReducer(state, { type: 'TRANSLATE_PIECES', pieceIds: [id], dx: 0, dy: 0 })
+      expect(state).toBe(before)
+    })
+
+    it('clears dock on moved vertices (a rigid move overrides any prior constraint)', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const hostId = state.document.pieces[0].id
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: 20, y: 20 }, end: { x: 25, y: 25 } })
+      const lineId = state.document.pieces[1].id
+      const vertexId = state.document.pieces[1].vertices[0].id
+      state = patternReducer(state, {
+        type: 'MOVE_VERTEX',
+        pieceId: lineId,
+        vertexId,
+        point: { x: 5, y: 0 },
+        dock: { kind: 'edge', targetPieceId: hostId, edgeIndex: 0, t: 0.5 },
+      })
+
+      state = patternReducer(state, { type: 'TRANSLATE_PIECES', pieceIds: [lineId], dx: 1, dy: 1 })
+      const v = state.document.pieces.find((p) => p.id === lineId).vertices[0]
+      expect(v.dock).toBeNull()
+      expect(v.point).toEqual({ x: 6, y: 1 })
+    })
+  })
+
   describe('LOAD', () => {
     it('normalizes a document missing newer fields (e.g. a pattern saved before internalLines existed)', () => {
       const legacyDocument = { pieces: [], stitchPatternDefs: [], stitchLines: [], offsetPaths: [] }

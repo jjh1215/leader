@@ -26,3 +26,19 @@ export function distanceToPolyline(point, polygon, closed) {
   }
   return min
 }
+
+// Standard ray-casting point-in-polygon test, for hitting a closed piece's
+// filled interior (e.g. to drag-move the whole piece) as opposed to just its
+// edges/vertices.
+export function pointInPolygon(point, polygon) {
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i]
+    const b = polygon[j]
+    const crosses = a.y > point.y !== b.y > point.y
+    if (crosses && point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x) {
+      inside = !inside
+    }
+  }
+  return inside
+}
