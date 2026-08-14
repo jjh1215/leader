@@ -218,6 +218,48 @@ export function patternReducer(state, action) {
       return commit(state, { ...state.document, pieces: nextPieces })
     }
 
+    // Repositions a 2-vertex open piece's second point from its first, by
+    // exact length + angle -- the numeric alternative to dragging a line tool.
+    case 'SET_LINE_DIMENSIONS': {
+      const { pieceId, length, angleDeg } = action
+      const rad = (angleDeg * Math.PI) / 180
+      const nextPieces = state.document.pieces.map((p) => {
+        if (p.id !== pieceId || p.vertices.length !== 2) return p
+        const start = p.vertices[0].point
+        const end = { x: start.x + length * Math.cos(rad), y: start.y + length * Math.sin(rad) }
+        return { ...p, vertices: [p.vertices[0], { ...p.vertices[1], point: end }] }
+      })
+      return commit(state, { ...state.document, pieces: nextPieces })
+    }
+
+    // Rescales a closed 4-vertex axis-aligned rectangle to an exact
+    // width/height, anchored at its current min-x/min-y corner. Remaps each
+    // vertex by which corner it currently occupies (left/right, top/bottom)
+    // rather than by array index, so a rectangle whose vertices are no longer
+    // in the original perimeter order (e.g. after manual dragging) doesn't
+    // get its edges scrambled into a self-crossing shape.
+    case 'SET_RECT_DIMENSIONS': {
+      const { pieceId, minX, minY, width, height } = action
+      const nextPieces = state.document.pieces.map((p) => {
+        if (p.id !== pieceId || p.vertices.length !== 4) return p
+        const xs = p.vertices.map((v) => v.point.x)
+        const ys = p.vertices.map((v) => v.point.y)
+        const oldMinX = Math.min(...xs)
+        const oldMinY = Math.min(...ys)
+        return {
+          ...p,
+          vertices: p.vertices.map((v) => ({
+            ...v,
+            point: {
+              x: v.point.x === oldMinX ? minX : minX + width,
+              y: v.point.y === oldMinY ? minY : minY + height,
+            },
+          })),
+        }
+      })
+      return commit(state, { ...state.document, pieces: nextPieces })
+    }
+
     case 'SET_VERTEX_RADIUS': {
       const nextPieces = state.document.pieces.map((p) =>
         p.id !== action.pieceId

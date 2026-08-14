@@ -180,4 +180,73 @@ describe('patternReducer', () => {
       expect(state).toBe(before)
     })
   })
+
+  describe('SET_LINE_DIMENSIONS', () => {
+    it('repositions the second vertex from the first by exact length and angle', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: 5, y: 5 }, end: { x: 999, y: 999 } })
+      const pieceId = state.document.pieces[0].id
+
+      state = patternReducer(state, { type: 'SET_LINE_DIMENSIONS', pieceId, length: 10, angleDeg: 0 })
+      let end = state.document.pieces[0].vertices[1].point
+      expect(end.x).toBeCloseTo(15, 6)
+      expect(end.y).toBeCloseTo(5, 6)
+
+      state = patternReducer(state, { type: 'SET_LINE_DIMENSIONS', pieceId, length: 10, angleDeg: 90 })
+      end = state.document.pieces[0].vertices[1].point
+      expect(end.x).toBeCloseTo(5, 6)
+      expect(end.y).toBeCloseTo(15, 6)
+    })
+  })
+
+  describe('SET_RECT_DIMENSIONS', () => {
+    it('rescales a rectangle to exact width/height anchored at minX/minY', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const pieceId = state.document.pieces[0].id
+
+      state = patternReducer(state, { type: 'SET_RECT_DIMENSIONS', pieceId, minX: 0, minY: 0, width: 30, height: 20 })
+      const points = state.document.pieces[0].vertices.map((v) => v.point)
+      expect(points).toEqual([
+        { x: 0, y: 0 },
+        { x: 30, y: 0 },
+        { x: 30, y: 20 },
+        { x: 0, y: 20 },
+      ])
+    })
+
+    it('preserves each vertex\'s corner role instead of scrambling order after manual dragging', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const pieceId = state.document.pieces[0].id
+      // Simulate the vertices having been reordered/dragged so they are no
+      // longer in the canonical ADD_RECT_PIECE perimeter order -- swap
+      // vertex 0 and vertex 2 (opposite corners) in the array.
+      const original = state.document.pieces[0].vertices
+      const shuffled = [original[2], original[1], original[0], original[3]]
+      state = {
+        ...state,
+        document: {
+          ...state.document,
+          pieces: [{ ...state.document.pieces[0], vertices: shuffled }],
+        },
+      }
+
+      state = patternReducer(state, { type: 'SET_RECT_DIMENSIONS', pieceId, minX: 0, minY: 0, width: 40, height: 20 })
+      const points = state.document.pieces[0].vertices.map((v) => v.point)
+      // Corner roles must be preserved: what was (10,10) [maxX,maxY] must
+      // become (40,20) [new maxX,maxY], not silently become (0,0).
+      expect(points).toEqual([
+        { x: 40, y: 20 },
+        { x: 40, y: 0 },
+        { x: 0, y: 0 },
+        { x: 0, y: 20 },
+      ])
+      // And it must still trace a proper (non-self-crossing) rectangle perimeter.
+      const xs = points.map((p) => p.x)
+      const ys = points.map((p) => p.y)
+      expect(new Set(xs)).toEqual(new Set([0, 40]))
+      expect(new Set(ys)).toEqual(new Set([0, 20]))
+    })
+  })
 })

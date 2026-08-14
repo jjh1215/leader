@@ -4,6 +4,7 @@ import { distanceToPolyline } from './geometry/hitTest.js'
 import { offsetPolygon } from './geometry/offset.js'
 import { pointsToPathD } from './geometry/path.js'
 import { pxToMm, screenToDocPoint } from './geometry/screenToDoc.js'
+import { snapOrthogonal } from './geometry/snap.js'
 import { placeStitchHoles } from './geometry/stitch.js'
 
 const HIT_RADIUS_PX = 8
@@ -57,6 +58,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
   const [dragVertex, setDragVertex] = useState(null) // transient preview: { pieceId, vertexId, point }
   const [panStart, setPanStart] = useState(null)
   const [shapeDrag, setShapeDrag] = useState(null) // transient rect/line preview: { start, end }
+  const [hoverPoint, setHoverPoint] = useState(null) // rubber-band preview for the draw-line pen tool
 
   const { document, toolMode, activePieceId, selection, selectedPieceIds } = state
 
@@ -101,15 +103,20 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
   }
 
   function handlePointerDown(e) {
-    const point = toDoc(e)
+    let point = toDoc(e)
 
     if (toolMode === 'draw-line' && activePieceId) {
       const piece = document.pieces.find((p) => p.id === activePieceId)
+      const lastVertex = piece?.vertices[piece.vertices.length - 1]
+      if (lastVertex && e.shiftKey) {
+        point = snapOrthogonal(lastVertex.point, point)
+      }
       if (piece && piece.vertices.length >= 3) {
         const first = piece.vertices[0]
         const d = Math.hypot(first.point.x - point.x, first.point.y - point.y)
         if (d < hitRadiusMm()) {
           dispatch({ type: 'CLOSE_ACTIVE_PIECE' })
+          setHoverPoint(null)
           return
         }
       }
@@ -150,12 +157,21 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     if (dragVertex) {
       setDragVertex({ ...dragVertex, point: toDoc(e) })
     } else if (shapeDrag) {
-      setShapeDrag({ ...shapeDrag, end: toDoc(e) })
+      const raw = toDoc(e)
+      const end = e.shiftKey ? snapOrthogonal(shapeDrag.start, raw) : raw
+      setShapeDrag({ ...shapeDrag, end })
     } else if (panStart) {
       const rect = svgRef.current.getBoundingClientRect()
       const dxMm = (e.clientX - panStart.clientX) * (panStart.viewBox.width / rect.width)
       const dyMm = (e.clientY - panStart.clientY) * (panStart.viewBox.height / rect.height)
       setViewBox({ ...panStart.viewBox, x: panStart.viewBox.x - dxMm, y: panStart.viewBox.y - dyMm })
+    } else if (toolMode === 'draw-line' && activePieceId) {
+      const piece = document.pieces.find((p) => p.id === activePieceId)
+      const lastVertex = piece?.vertices[piece.vertices.length - 1]
+      if (lastVertex) {
+        const raw = toDoc(e)
+        setHoverPoint(e.shiftKey ? snapOrthogonal(lastVertex.point, raw) : raw)
+      }
     }
   }
 
@@ -198,6 +214,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
   function handleDoubleClick() {
     if (toolMode === 'draw-line') {
       dispatch({ type: 'END_OPEN_PATH' })
+      setHoverPoint(null)
     }
   }
 
@@ -206,6 +223,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       dispatch({ type: 'DELETE_VERTEX', pieceId: selection.pieceId, vertexId: selection.vertexId })
     } else if (e.key === 'Escape' && toolMode === 'draw-line') {
       dispatch({ type: 'END_OPEN_PATH' })
+      setHoverPoint(null)
     }
   }
 
@@ -362,6 +380,27 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
             vectorEffect="non-scaling-stroke"
           />
         ))}
+
+      {toolMode === 'draw-line' &&
+        activePieceId &&
+        hoverPoint &&
+        (() => {
+          const piece = document.pieces.find((p) => p.id === activePieceId)
+          const lastVertex = piece?.vertices[piece.vertices.length - 1]
+          if (!lastVertex) return null
+          return (
+            <line
+              x1={lastVertex.point.x}
+              y1={lastVertex.point.y}
+              x2={hoverPoint.x}
+              y2={hoverPoint.y}
+              stroke="#1e6fe0"
+              strokeDasharray="3 3"
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+            />
+          )
+        })()}
     </svg>
   )
 }
