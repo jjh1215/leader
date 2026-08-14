@@ -24,38 +24,48 @@ function boundaryDistance(a, b) {
   return Math.min(diff, 40 - diff)
 }
 
-describe('placeStitchHoles', () => {
-  it('places holes evenly (by arc length) around a closed square whose perimeter divides evenly by pitch', () => {
-    // perimeter = 40mm, pitch 4mm -> exactly 10 holes, 4mm apart along the boundary
-    const holes = placeStitchHoles(SQUARE_10, true, 4)
-    expect(holes).toHaveLength(10)
-    // Exact expected positions, hand-derived by walking the perimeter at 0,4,8,...,36mm.
-    expect(holes).toEqual([
-      { x: 0, y: 0 },
-      { x: 4, y: 0 },
-      { x: 8, y: 0 },
-      { x: 10, y: 2 },
-      { x: 10, y: 6 },
-      { x: 10, y: 10 },
-      { x: 6, y: 10 },
-      { x: 2, y: 10 },
-      { x: 0, y: 8 },
-      { x: 0, y: 4 },
-    ])
-    for (let i = 0; i < holes.length; i++) {
-      const next = holes[(i + 1) % holes.length]
-      expect(boundaryDistance(holes[i], next)).toBeCloseTo(4, 6)
-    }
-  })
+function hasHoleAt(holes, point) {
+  return holes.some((h) => Math.abs(h.x - point.x) < 1e-9 && Math.abs(h.y - point.y) < 1e-9)
+}
 
-  it('adjusts pitch slightly so holes divide the perimeter evenly (no short leftover gap)', () => {
-    // perimeter = 40mm, requested pitch 6mm -> round(40/6)=7 holes, adjusted pitch 40/7
-    const holes = placeStitchHoles(SQUARE_10, true, 6)
-    expect(holes).toHaveLength(7)
-    const expectedSpacing = 40 / 7
+describe('placeStitchHoles', () => {
+  it('anchors a hole at every corner, adjusting pitch per edge rather than once for the whole perimeter', () => {
+    // Each 10mm edge independently fits round(10/4)=3 holes at that edge's own
+    // adjusted pitch (10/3mm) -- 4 edges * 3 = 12 holes, more than a naive
+    // perimeter/pitch estimate (40/4=10) would suggest, but every corner gets
+    // one instead of 3 of the 4 corners landing at an odd, un-anchored offset.
+    const holes = placeStitchHoles(SQUARE_10, true, 4)
+    expect(holes).toHaveLength(12)
+    for (const corner of SQUARE_10) {
+      expect(hasHoleAt(holes, corner)).toBe(true)
+    }
+    const expectedSpacing = 10 / 3
     for (let i = 0; i < holes.length; i++) {
       const next = holes[(i + 1) % holes.length]
       expect(boundaryDistance(holes[i], next)).toBeCloseTo(expectedSpacing, 6)
+    }
+  })
+
+  it('adjusts pitch per edge so a requested pitch that does not divide an edge evenly still lands cleanly', () => {
+    // Each edge: round(10/6)=2 holes at adjusted pitch 10/2=5mm -- 4*2=8 total.
+    const holes = placeStitchHoles(SQUARE_10, true, 6)
+    expect(holes).toEqual([
+      { x: 0, y: 0 },
+      { x: 5, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 5 },
+      { x: 10, y: 10 },
+      { x: 5, y: 10 },
+      { x: 0, y: 10 },
+      { x: 0, y: 5 },
+    ])
+  })
+
+  it('anchors every corner even when edge lengths differ (the corner-drift bug this fixes)', () => {
+    const rect = [{ x: 0, y: 0 }, { x: 34, y: 0 }, { x: 34, y: 24 }, { x: 0, y: 24 }]
+    const holes = placeStitchHoles(rect, true, 5)
+    for (const corner of rect) {
+      expect(hasHoleAt(holes, corner)).toBe(true)
     }
   })
 

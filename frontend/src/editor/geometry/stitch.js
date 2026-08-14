@@ -13,23 +13,6 @@ function polylineLength(points, closed) {
   return total
 }
 
-function pointAtDistance(points, closed, targetDist) {
-  let remaining = targetDist
-  const n = points.length
-  const segCount = closed ? n : n - 1
-  for (let i = 0; i < segCount; i++) {
-    const a = points[i]
-    const b = points[(i + 1) % n]
-    const segLen = Math.hypot(b.x - a.x, b.y - a.y)
-    if (remaining <= segLen || i === segCount - 1) {
-      const t = segLen === 0 ? 0 : Math.min(1, remaining / segLen)
-      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }
-    }
-    remaining -= segLen
-  }
-  return points[points.length - 1]
-}
-
 function pointAndSegmentAtDistance(points, targetDist) {
   let remaining = targetDist
   const n = points.length
@@ -100,21 +83,37 @@ export function offsetOpenPolyline(points, distanceMm) {
   })
 }
 
-// Returns hole center points spaced at approximately pitchMm along the path.
-// For closed paths the pitch is nudged so holes divide the perimeter evenly
-// (total / round(total/pitch)) instead of leaving one short gap at the seam.
+// Returns hole center points spaced at approximately pitchMm along the path,
+// with a hole anchored at every vertex (corner) -- pitch is nudged per EDGE
+// (not once for the whole perimeter/path) so each straight run between two
+// corners divides evenly on its own. A single perimeter-wide adjusted pitch
+// only guarantees even spacing in aggregate: the loop's first point always
+// gets a hole (since holes are walked from there), but the perimeter rarely
+// divides evenly into pitch at every OTHER corner too, so 3 corners out of 4
+// on a plain rectangle would end up with a hole sitting oddly close to (but
+// not on) them instead of centered on the corner like the first one -- which
+// reads as visibly uneven/wrong right where it's most noticeable. Per-edge
+// adjustment costs only "the realized pitch can vary slightly edge to edge"
+// (typically imperceptible, and edges are usually similar lengths anyway) in
+// exchange for every corner always getting its own hole.
 export function placeStitchHoles(points, closed, pitchMm) {
   if (points.length < 2 || pitchMm <= 0) return []
-  const total = polylineLength(points, closed)
-  if (total <= 0) return []
-
-  const count = Math.max(1, Math.round(total / pitchMm))
-  const adjustedPitch = total / count
-  const holeCount = closed ? count : count + 1 // open path includes both endpoints
+  const n = points.length
+  const segCount = closed ? n : n - 1
 
   const holes = []
-  for (let i = 0; i < holeCount; i++) {
-    holes.push(pointAtDistance(points, closed, i * adjustedPitch))
+  for (let i = 0; i < segCount; i++) {
+    const a = points[i]
+    const b = points[(i + 1) % n]
+    const segLen = Math.hypot(b.x - a.x, b.y - a.y)
+    const count = segLen > 0 ? Math.max(1, Math.round(segLen / pitchMm)) : 1
+    for (let k = 0; k < count; k++) {
+      const t = segLen > 0 ? (k * (segLen / count)) / segLen : 0
+      holes.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t })
+    }
+  }
+  if (!closed) {
+    holes.push(points[n - 1]) // the final vertex is never a segment's own start above
   }
   return holes
 }
