@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createPattern, deletePattern, listPatterns } from '../api/patternsApi'
+import Button from '../ui/Button.jsx'
 
 const EMPTY_CONTENT = {
   pieces: [],
@@ -44,7 +45,9 @@ function PatternListPage() {
     <div style={{ fontFamily: 'sans-serif', padding: '2rem', maxWidth: 720 }}>
       <h1>가죽공예 패턴</h1>
       {error && <p style={{ color: 'crimson' }}>{error}</p>}
-      <button onClick={handleCreate}>+ 새 패턴</button>
+      <Button icon="➕" variant="primary" onClick={handleCreate}>
+        새 패턴
+      </Button>
       {patterns === null ? (
         <p>불러오는 중...</p>
       ) : patterns.length === 0 ? (
@@ -70,7 +73,9 @@ function PatternListPage() {
                 <br />
                 <small>수정: {new Date(p.updatedAt).toLocaleString('ko-KR')}</small>
               </span>
-              <button onClick={(e) => handleDelete(p.id, e)}>삭제</button>
+              <Button icon="🗑" variant="danger" onClick={(e) => handleDelete(p.id, e)}>
+                삭제
+              </Button>
             </li>
           ))}
         </ul>

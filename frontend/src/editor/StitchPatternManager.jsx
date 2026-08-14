@@ -1,5 +1,8 @@
 import { useState } from 'react'
 import { generateId } from './geometry/id.js'
+import Button from '../ui/Button.jsx'
+
+const smallButtonStyle = { padding: '0.15rem 0.4rem', fontSize: '0.75rem' }
 
 function StitchPatternManager({ document, dispatch }) {
   const [name, setName] = useState('기본 스티치')
@@ -24,7 +27,12 @@ function StitchPatternManager({ document, dispatch }) {
             <span>
               {def.name} (pitch {def.pitch}mm, 홀 {def.holeDiameter}mm, {def.style === 'single' ? '단일' : '대각'})
             </span>
-            <button onClick={() => dispatch({ type: 'DELETE_STITCH_PATTERN_DEF', id: def.id })}>×</button>
+            <Button
+              icon="✕"
+              variant="danger"
+              style={smallButtonStyle}
+              onClick={() => dispatch({ type: 'DELETE_STITCH_PATTERN_DEF', id: def.id })}
+            />
           </li>
         ))}
       </ul>
@@ -51,7 +59,9 @@ function StitchPatternManager({ document, dispatch }) {
             <option value="diagonal">대각선(유럽식)</option>
           </select>
         </label>
-        <button onClick={handleAdd}>+ 프리셋 추가</button>
+        <Button icon="➕" onClick={handleAdd}>
+          프리셋 추가
+        </Button>
       </div>
     </div>
   )

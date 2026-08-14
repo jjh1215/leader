@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import StitchPatternManager from './StitchPatternManager.jsx'
 import { generateId } from './geometry/id.js'
+import Button from '../ui/Button.jsx'
+
+const smallButtonStyle = { padding: '0.15rem 0.4rem', fontSize: '0.75rem' }
 
 function OffsetPathControls({ piece, offsetPaths, dispatch }) {
   const [distance, setDistance] = useState(5)
@@ -17,7 +20,9 @@ function OffsetPathControls({ piece, offsetPaths, dispatch }) {
           style={{ width: '3.5rem' }}
         />
         <span style={{ fontSize: '0.75rem' }}>mm</span>
-        <button
+        <Button
+          icon="↗"
+          style={smallButtonStyle}
           onClick={() =>
             dispatch({
               type: 'ADD_OFFSET_PATH',
@@ -30,13 +35,13 @@ function OffsetPathControls({ piece, offsetPaths, dispatch }) {
             })
           }
         >
-          + 바깥 오프셋
-        </button>
+          바깥 오프셋
+        </Button>
       </div>
       {pieceOffsets.map((o) => (
-        <div key={o.id} style={{ fontSize: '0.75rem', color: '#2a7a4a', display: 'flex', justifyContent: 'space-between' }}>
+        <div key={o.id} style={{ fontSize: '0.75rem', color: '#2a7a4a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span>{o.name}</span>
-          <button onClick={() => dispatch({ type: 'DELETE_OFFSET_PATH', id: o.id })}>×</button>
+          <Button icon="✕" variant="danger" style={smallButtonStyle} onClick={() => dispatch({ type: 'DELETE_OFFSET_PATH', id: o.id })} />
         </div>
       ))}
     </div>
@@ -70,7 +75,9 @@ function StitchLineControls({ piece, document, dispatch }) {
             </option>
           ))}
         </select>
-        <button
+        <Button
+          icon="🧵"
+          style={smallButtonStyle}
           onClick={() =>
             dispatch({
               type: 'ADD_STITCH_LINE',
@@ -84,13 +91,13 @@ function StitchLineControls({ piece, document, dispatch }) {
             })
           }
         >
-          + 스티치 라인
-        </button>
+          스티치 라인
+        </Button>
       </div>
       {pieceStitchLines.map((s) => (
-        <div key={s.id} style={{ fontSize: '0.75rem', color: '#b03060', display: 'flex', justifyContent: 'space-between' }}>
+        <div key={s.id} style={{ fontSize: '0.75rem', color: '#b03060', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span>{s.name}</span>
-          <button onClick={() => dispatch({ type: 'DELETE_STITCH_LINE', id: s.id })}>×</button>
+          <Button icon="✕" variant="danger" style={smallButtonStyle} onClick={() => dispatch({ type: 'DELETE_STITCH_LINE', id: s.id })} />
         </div>
       ))}
     </div>
@@ -116,7 +123,7 @@ function PieceListSidebar({ state, dispatch }) {
                 style={{ flex: 1, minWidth: 0 }}
               />
               <span style={{ fontSize: '0.75rem', color: '#888' }}>{piece.vertices.length}점</span>
-              <button onClick={() => dispatch({ type: 'DELETE_PIECE', pieceId: piece.id })}>×</button>
+              <Button icon="✕" variant="danger" style={smallButtonStyle} onClick={() => dispatch({ type: 'DELETE_PIECE', pieceId: piece.id })} />
             </div>
             <OffsetPathControls piece={piece} offsetPaths={document.offsetPaths} dispatch={dispatch} />
             <StitchLineControls piece={piece} document={document} dispatch={dispatch} />

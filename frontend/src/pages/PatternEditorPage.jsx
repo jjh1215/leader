@@ -5,9 +5,11 @@ import { usePatternReducer, emptyDocument } from '../editor/patternReducer.js'
 import PatternCanvas from '../editor/PatternCanvas.jsx'
 import Toolbar from '../editor/Toolbar.jsx'
 import DimensionPanel from '../editor/DimensionPanel.jsx'
+import HintOverlay from '../editor/HintOverlay.jsx'
 import PieceListSidebar from '../editor/PieceListSidebar.jsx'
 import { useScreenCalibration } from '../calibration/useScreenCalibration.js'
 import CalibrationModal from '../calibration/CalibrationModal.jsx'
+import Button from '../ui/Button.jsx'
 
 function PatternEditorPage() {
   const { id } = useParams()
@@ -70,15 +72,23 @@ function PatternEditorPage() {
   return (
     <div style={{ fontFamily: 'sans-serif', display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <div style={{ padding: '0.5rem 1rem', borderBottom: '1px solid #ddd', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-        <button onClick={() => navigate('/')}>← 목록으로</button>
+        <Button icon="←" onClick={() => navigate('/')}>
+          목록으로
+        </Button>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          style={{ fontSize: '1.1rem', fontWeight: 'bold' }}
+          style={{
+            fontSize: '1.1rem',
+            fontWeight: 'bold',
+            border: '1px solid transparent',
+            borderRadius: 6,
+            padding: '0.3rem 0.5rem',
+          }}
         />
-        <button onClick={handleSave} disabled={saving}>
+        <Button icon="💾" variant="primary" onClick={handleSave} disabled={saving}>
           {saving ? '저장 중...' : '저장'}
-        </button>
+        </Button>
       </div>
 
       <div style={{ padding: '0 1rem', borderBottom: '1px solid #eee' }}>
@@ -101,6 +111,7 @@ function PatternEditorPage() {
             pxPerMm={calibration.pxPerMm}
           />
           <DimensionPanel state={state} dispatch={dispatch} />
+          <HintOverlay state={state} />
         </div>
         <PieceListSidebar state={state} dispatch={dispatch} />
       </div>

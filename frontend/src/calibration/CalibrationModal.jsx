@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import Button from '../ui/Button.jsx'
 
 const BAR_PX = 300
 
@@ -49,10 +50,12 @@ function CalibrationModal({ onClose, onCalibrate }) {
             />
           </label>
           <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-            <button type="button" onClick={onClose}>
+            <Button type="button" onClick={onClose}>
               취소
-            </button>
-            <button type="submit">저장</button>
+            </Button>
+            <Button type="submit" variant="primary" icon="📐">
+              저장
+            </Button>
           </div>
         </form>
       </div>

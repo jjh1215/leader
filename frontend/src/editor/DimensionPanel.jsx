@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { isAxisAlignedRect } from './geometry/rectDetect.js'
+import Button from '../ui/Button.jsx'
 
 function lineLengthAngle(piece) {
   const [a, b] = piece.vertices
@@ -54,7 +55,9 @@ function DrawByDimensionSection({ toolMode, dispatch }) {
         <strong>치수로 그리기</strong>
         <Field label="폭 (mm)" min={0.1} step={1} value={width} onChange={(e) => setWidth(e.target.value)} />
         <Field label="높이 (mm)" min={0.1} step={1} value={height} onChange={(e) => setHeight(e.target.value)} />
-        <button
+        <Button
+          icon="⬜"
+          variant="primary"
           onClick={() =>
             dispatch({
               type: 'ADD_RECT_PIECE',
@@ -64,7 +67,7 @@ function DrawByDimensionSection({ toolMode, dispatch }) {
           }
         >
           그리기
-        </button>
+        </Button>
       </>
     )
   }
@@ -75,7 +78,9 @@ function DrawByDimensionSection({ toolMode, dispatch }) {
         <strong>치수로 그리기</strong>
         <Field label="길이 (mm)" min={0.1} step={1} value={length} onChange={(e) => setLength(e.target.value)} />
         <Field label="각도 (°)" step={1} value={angleDeg} onChange={(e) => setAngleDeg(e.target.value)} />
-        <button
+        <Button
+          icon="📏"
+          variant="primary"
           onClick={() => {
             const rad = (num(angleDeg) * Math.PI) / 180
             const len = num(length, 1)
@@ -87,7 +92,7 @@ function DrawByDimensionSection({ toolMode, dispatch }) {
           }}
         >
           그리기
-        </button>
+        </Button>
       </>
     )
   }

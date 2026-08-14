@@ -5,6 +5,7 @@ import { offsetPolygon } from './geometry/offset.js'
 import { pointsToPathD } from './geometry/path.js'
 import { pxToMm, screenToDocPoint } from './geometry/screenToDoc.js'
 import { snapOrthogonal } from './geometry/snap.js'
+import { snapToNearbyVertex as snapToNearbyVertexPure } from './geometry/dockSnap.js'
 import { placeStitchHoles } from './geometry/stitch.js'
 
 const HIT_RADIUS_PX = 8
@@ -86,6 +87,15 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     return best
   }
 
+  // "Docking": when a point being placed while drawing lands near an existing
+  // vertex (on any piece, including other pieces), snap exactly onto it
+  // instead of leaving a near-miss gap. This is what lets two separately
+  // drawn lines end up sharing an exact coordinate, so they read as joined
+  // and MERGE_PIECES/rendering never shows a hairline gap at the seam.
+  function snapToNearbyVertex(point) {
+    return snapToNearbyVertexPure(point, document.pieces, hitRadiusMm())
+  }
+
   function findNearestPiece(point) {
     const threshold = hitRadiusMm()
     let best = null
@@ -120,12 +130,13 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
           return
         }
       }
-      dispatch({ type: 'ADD_VERTEX', pieceId: activePieceId, point })
+      dispatch({ type: 'ADD_VERTEX', pieceId: activePieceId, point: snapToNearbyVertex(point) })
       return
     }
 
     if (toolMode === 'rect' || toolMode === 'line') {
-      setShapeDrag({ start: point, end: point })
+      const start = snapToNearbyVertex(point)
+      setShapeDrag({ start, end: start })
       return
     }
 
@@ -158,8 +169,8 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       setDragVertex({ ...dragVertex, point: toDoc(e) })
     } else if (shapeDrag) {
       const raw = toDoc(e)
-      const end = e.shiftKey ? snapOrthogonal(shapeDrag.start, raw) : raw
-      setShapeDrag({ ...shapeDrag, end })
+      const constrained = e.shiftKey ? snapOrthogonal(shapeDrag.start, raw) : raw
+      setShapeDrag({ ...shapeDrag, end: snapToNearbyVertex(constrained) })
     } else if (panStart) {
       const rect = svgRef.current.getBoundingClientRect()
       const dxMm = (e.clientX - panStart.clientX) * (panStart.viewBox.width / rect.width)
@@ -170,7 +181,8 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       const lastVertex = piece?.vertices[piece.vertices.length - 1]
       if (lastVertex) {
         const raw = toDoc(e)
-        setHoverPoint(e.shiftKey ? snapOrthogonal(lastVertex.point, raw) : raw)
+        const constrained = e.shiftKey ? snapOrthogonal(lastVertex.point, raw) : raw
+        setHoverPoint(snapToNearbyVertex(constrained))
       }
     }
   }
@@ -228,6 +240,25 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
   }
 
   const vertexRadiusMm = viewBox.width / 130
+
+  // For the "docking" visual cue: is this point currently snapped exactly
+  // onto an existing vertex? (snapToNearbyVertex makes it exactly equal when so.)
+  function dockedAt(point) {
+    if (!point) return null
+    for (const piece of document.pieces) {
+      for (const v of piece.vertices) {
+        if (v.point.x === point.x && v.point.y === point.y) return v.point
+      }
+    }
+    return null
+  }
+
+  const dockPoint =
+    toolMode === 'draw-line'
+      ? dockedAt(hoverPoint)
+      : toolMode === 'rect' || toolMode === 'line'
+        ? dockedAt(shapeDrag?.end)
+        : null
 
   // In "actual size" mode the SVG is given an explicit CSS pixel size derived
   // from the calibrated pxPerMm, instead of stretching to fill its container --
@@ -401,6 +432,18 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
             />
           )
         })()}
+
+      {dockPoint && (
+        <circle
+          cx={dockPoint.x}
+          cy={dockPoint.y}
+          r={vertexRadiusMm * 2.2}
+          fill="none"
+          stroke="#e0781e"
+          strokeWidth={2}
+          vectorEffect="non-scaling-stroke"
+        />
+      )}
     </svg>
   )
 }
