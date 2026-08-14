@@ -532,6 +532,44 @@ describe('patternReducer', () => {
       state = patternReducer(state, { type: 'DELETE_VERTEX', pieceId: rectId, vertexId: endpointId })
       expect(state.document.internalLines).toHaveLength(0)
     })
+
+    it('a stitch line placed on an internal line is removed along with it (endpoint delete, piece delete)', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const rectId = state.document.pieces[0].id
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: -5, y: 5 }, end: { x: 15, y: 5 } })
+      const lineId = state.document.pieces[1].id
+      state = patternReducer(state, { type: 'ADD_INTERNAL_LINE', closedPieceId: rectId, linePieceId: lineId })
+      const internalLineId = state.document.internalLines[0].id
+      state = patternReducer(state, {
+        type: 'ADD_STITCH_LINE',
+        stitchLine: { id: 's1', name: 's', sourceInternalLineId: internalLineId, insetDistance: 1, stitchPatternDefId: 'd1' },
+      })
+      expect(state.document.stitchLines).toHaveLength(1)
+
+      const endpointId = state.document.internalLines[0].vertexIdA
+      state = patternReducer(state, { type: 'DELETE_VERTEX', pieceId: rectId, vertexId: endpointId })
+      expect(state.document.internalLines).toHaveLength(0)
+      expect(state.document.stitchLines).toHaveLength(0)
+    })
+
+    it('a stitch line placed on an internal line is removed when its source piece is deleted', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const rectId = state.document.pieces[0].id
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: -5, y: 5 }, end: { x: 15, y: 5 } })
+      const lineId = state.document.pieces[1].id
+      state = patternReducer(state, { type: 'ADD_INTERNAL_LINE', closedPieceId: rectId, linePieceId: lineId })
+      const internalLineId = state.document.internalLines[0].id
+      state = patternReducer(state, {
+        type: 'ADD_STITCH_LINE',
+        stitchLine: { id: 's1', name: 's', sourceInternalLineId: internalLineId, insetDistance: 1, stitchPatternDefId: 'd1' },
+      })
+
+      state = patternReducer(state, { type: 'DELETE_PIECE', pieceId: rectId })
+      expect(state.document.internalLines).toHaveLength(0)
+      expect(state.document.stitchLines).toHaveLength(0)
+    })
   })
 
   describe('TRANSLATE_PIECES', () => {

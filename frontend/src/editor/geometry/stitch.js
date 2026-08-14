@@ -30,6 +30,26 @@ function pointAtDistance(points, closed, targetDist) {
   return points[points.length - 1]
 }
 
+// Trims insetMm off both ends of a straight segment (used for stitching
+// along an internalLine, where "inset" can't mean an inward polygon offset
+// like it does for a piece boundary -- there's no interior side to offset
+// into, only two ends to pull back from so holes don't land right on the
+// piece's outer edge). Returns null if the segment is too short to trim.
+export function insetSegment(a, b, insetMm) {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const length = Math.hypot(dx, dy)
+  if (length <= 0) return null
+  const trimmed = length - insetMm * 2
+  if (trimmed <= 0) return null
+  const ux = dx / length
+  const uy = dy / length
+  return [
+    { x: a.x + ux * insetMm, y: a.y + uy * insetMm },
+    { x: b.x - ux * insetMm, y: b.y - uy * insetMm },
+  ]
+}
+
 // Returns hole center points spaced at approximately pitchMm along the path.
 // For closed paths the pitch is nudged so holes divide the perimeter evenly
 // (total / round(total/pitch)) instead of leaving one short gap at the seam.

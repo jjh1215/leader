@@ -535,12 +535,19 @@ export function patternReducer(state, action) {
       const nextPieces = state.document.pieces.map((p) =>
         p.id !== action.pieceId ? p : { ...p, vertices: p.vertices.filter((v) => v.id !== action.vertexId) }
       )
+      // An internal line's endpoint no longer exists -- the line goes with
+      // it, and so does any stitch line that was placed along that line.
+      const removedInternalLineIds = state.document.internalLines
+        .filter((l) => l.vertexIdA === action.vertexId || l.vertexIdB === action.vertexId)
+        .map((l) => l.id)
       const nextDoc = {
         ...state.document,
         pieces: nextPieces,
-        // An internal line's endpoint no longer exists -- the line goes with it.
         internalLines: state.document.internalLines.filter(
           (l) => l.vertexIdA !== action.vertexId && l.vertexIdB !== action.vertexId
+        ),
+        stitchLines: state.document.stitchLines.filter(
+          (s) => !removedInternalLineIds.includes(s.sourceInternalLineId)
         ),
       }
       const nextState = commit(state, nextDoc)
@@ -548,10 +555,15 @@ export function patternReducer(state, action) {
     }
 
     case 'DELETE_PIECE': {
+      const removedInternalLineIds = state.document.internalLines
+        .filter((l) => l.sourcePieceId === action.pieceId)
+        .map((l) => l.id)
       const nextDoc = {
         ...state.document,
         pieces: state.document.pieces.filter((p) => p.id !== action.pieceId),
-        stitchLines: state.document.stitchLines.filter((s) => s.sourcePieceId !== action.pieceId),
+        stitchLines: state.document.stitchLines.filter(
+          (s) => s.sourcePieceId !== action.pieceId && !removedInternalLineIds.includes(s.sourceInternalLineId)
+        ),
         offsetPaths: state.document.offsetPaths.filter((o) => o.sourcePieceId !== action.pieceId),
         internalLines: state.document.internalLines.filter((l) => l.sourcePieceId !== action.pieceId),
       }
@@ -572,10 +584,15 @@ export function patternReducer(state, action) {
     // one commit so undo restores every deleted piece in a single step.
     case 'DELETE_PIECES': {
       const { pieceIds } = action
+      const removedInternalLineIds = state.document.internalLines
+        .filter((l) => pieceIds.includes(l.sourcePieceId))
+        .map((l) => l.id)
       const nextDoc = {
         ...state.document,
         pieces: state.document.pieces.filter((p) => !pieceIds.includes(p.id)),
-        stitchLines: state.document.stitchLines.filter((s) => !pieceIds.includes(s.sourcePieceId)),
+        stitchLines: state.document.stitchLines.filter(
+          (s) => !pieceIds.includes(s.sourcePieceId) && !removedInternalLineIds.includes(s.sourceInternalLineId)
+        ),
         offsetPaths: state.document.offsetPaths.filter((o) => !pieceIds.includes(o.sourcePieceId)),
         internalLines: state.document.internalLines.filter((l) => !pieceIds.includes(l.sourcePieceId)),
       }

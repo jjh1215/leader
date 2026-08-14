@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { placeStitchHoles } from './stitch.js'
+import { insetSegment, placeStitchHoles } from './stitch.js'
 
 const SQUARE_10 = [
   { x: 0, y: 0 },
@@ -72,5 +72,32 @@ describe('placeStitchHoles', () => {
   it('returns an empty array for degenerate input', () => {
     expect(placeStitchHoles([], true, 4)).toEqual([])
     expect(placeStitchHoles(SQUARE_10, true, 0)).toEqual([])
+  })
+})
+
+describe('insetSegment', () => {
+  it('trims both ends of a horizontal segment inward by insetMm', () => {
+    const result = insetSegment({ x: 0, y: 0 }, { x: 10, y: 0 }, 2)
+    expect(result).toEqual([
+      { x: 2, y: 0 },
+      { x: 8, y: 0 },
+    ])
+  })
+
+  it('trims along an arbitrary direction, not just axis-aligned', () => {
+    const result = insetSegment({ x: 0, y: 0 }, { x: 6, y: 8 }, 2.5) // length 10
+    expect(result[0].x).toBeCloseTo(1.5, 6)
+    expect(result[0].y).toBeCloseTo(2, 6)
+    expect(result[1].x).toBeCloseTo(4.5, 6)
+    expect(result[1].y).toBeCloseTo(6, 6)
+  })
+
+  it('returns null when the inset would consume the whole segment', () => {
+    expect(insetSegment({ x: 0, y: 0 }, { x: 10, y: 0 }, 5)).toBeNull()
+    expect(insetSegment({ x: 0, y: 0 }, { x: 10, y: 0 }, 6)).toBeNull()
+  })
+
+  it('returns null for a zero-length segment', () => {
+    expect(insetSegment({ x: 3, y: 3 }, { x: 3, y: 3 }, 1)).toBeNull()
   })
 })

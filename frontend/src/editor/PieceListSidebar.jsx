@@ -104,6 +104,61 @@ function StitchLineControls({ piece, document, dispatch }) {
   )
 }
 
+function InternalLineStitchControls({ internalLine, document, dispatch }) {
+  const [inset, setInset] = useState(2)
+  const [defId, setDefId] = useState(document.stitchPatternDefs[0]?.id ?? '')
+  const lineStitchLines = document.stitchLines.filter((s) => s.sourceInternalLineId === internalLine.id)
+
+  if (document.stitchPatternDefs.length === 0) return null
+
+  return (
+    <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+      <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.7rem', color: '#7a4a1e' }}>{internalLine.name}</span>
+        <input
+          type="number"
+          step="0.5"
+          value={inset}
+          onChange={(e) => setInset(Number(e.target.value))}
+          style={{ width: '3.5rem' }}
+        />
+        <span style={{ fontSize: '0.75rem' }}>mm 인셋</span>
+        <select value={defId} onChange={(e) => setDefId(e.target.value)}>
+          {document.stitchPatternDefs.map((def) => (
+            <option key={def.id} value={def.id}>
+              {def.name}
+            </option>
+          ))}
+        </select>
+        <Button
+          icon="🧵"
+          style={smallButtonStyle}
+          onClick={() =>
+            dispatch({
+              type: 'ADD_STITCH_LINE',
+              stitchLine: {
+                id: generateId(),
+                name: `내부선 스티치 -${inset}mm`,
+                sourceInternalLineId: internalLine.id,
+                insetDistance: inset,
+                stitchPatternDefId: defId,
+              },
+            })
+          }
+        >
+          스티치
+        </Button>
+      </div>
+      {lineStitchLines.map((s) => (
+        <div key={s.id} style={{ fontSize: '0.75rem', color: '#b03060', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>{s.name}</span>
+          <Button icon="✕" variant="danger" style={smallButtonStyle} onClick={() => dispatch({ type: 'DELETE_STITCH_LINE', id: s.id })} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function PieceListSidebar({ state, dispatch }) {
   const { document } = state
 
@@ -127,6 +182,16 @@ function PieceListSidebar({ state, dispatch }) {
             </div>
             <OffsetPathControls piece={piece} offsetPaths={document.offsetPaths} dispatch={dispatch} />
             <StitchLineControls piece={piece} document={document} dispatch={dispatch} />
+            {document.internalLines
+              .filter((l) => l.sourcePieceId === piece.id)
+              .map((internalLine) => (
+                <InternalLineStitchControls
+                  key={internalLine.id}
+                  internalLine={internalLine}
+                  document={document}
+                  dispatch={dispatch}
+                />
+              ))}
           </li>
         ))}
       </ul>

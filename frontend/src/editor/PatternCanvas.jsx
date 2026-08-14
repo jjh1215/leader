@@ -6,7 +6,7 @@ import { offsetPolygon } from './geometry/offset.js'
 import { pointsToPathD } from './geometry/path.js'
 import { pxToMm, screenToDocPoint } from './geometry/screenToDoc.js'
 import { projectPointOntoLine, snapOrthogonal } from './geometry/snap.js'
-import { placeStitchHoles } from './geometry/stitch.js'
+import { insetSegment, placeStitchHoles } from './geometry/stitch.js'
 
 const HIT_RADIUS_PX = 8
 const MIN_SHAPE_DRAG_MM = 0.5 // ignore accidental clicks-without-drag for rect/line tools
@@ -549,17 +549,39 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       })}
 
       {document.stitchLines.map((stitchLine) => {
-        const piece = document.pieces.find((p) => p.id === stitchLine.sourcePieceId)
         const def = document.stitchPatternDefs.find((d) => d.id === stitchLine.stitchPatternDefId)
-        if (!piece || !def || piece.vertices.length < 2) return null
-        const flattened = flattenToPolygon(piece.vertices, piece.closed)
-        const loops = offsetPolygon(flattened, -stitchLine.insetDistance, piece.closed)
+        if (!def) return null
+
+        let loops
+        let holesClosed = false
+        if (stitchLine.sourceInternalLineId) {
+          // Stitching along a fold/mark internalLine: "inset" trims back
+          // from its two endpoints instead of offsetting inward (an open
+          // 2-point segment has no interior side to offset into), and it
+          // tracks the same live drag position as the internalLine's
+          // on-screen rendering so the holes don't lag behind a drag either.
+          const line = document.internalLines.find((l) => l.id === stitchLine.sourceInternalLineId)
+          if (!line) return null
+          const linePiece = document.pieces.find((p) => p.id === line.sourcePieceId)
+          if (!linePiece) return null
+          const a = linePiece.vertices.find((v) => v.id === line.vertexIdA)
+          const b = linePiece.vertices.find((v) => v.id === line.vertexIdB)
+          if (!a || !b) return null
+          const segment = insetSegment(liveVertexPoint(linePiece.id, a), liveVertexPoint(linePiece.id, b), stitchLine.insetDistance)
+          loops = segment ? [segment] : []
+        } else {
+          const piece = document.pieces.find((p) => p.id === stitchLine.sourcePieceId)
+          if (!piece || piece.vertices.length < 2) return null
+          const flattened = flattenToPolygon(piece.vertices, piece.closed)
+          loops = offsetPolygon(flattened, -stitchLine.insetDistance, piece.closed)
+          holesClosed = piece.closed
+        }
         const holeRadius = def.holeDiameter / 2
 
         return (
           <g key={stitchLine.id}>
             {loops.flatMap((loop, li) => {
-              const holes = placeStitchHoles(loop, piece.closed, def.pitch)
+              const holes = placeStitchHoles(loop, holesClosed, def.pitch)
               return holes.map((h, hi) =>
                 def.style === 'diagonal' ? (
                   <rect
