@@ -24,15 +24,40 @@ function cloneDoc(doc) {
   return JSON.parse(JSON.stringify(doc))
 }
 
+// Migrates one internalLine to the current { endpointA, endpointB } shape.
+// Already-current lines pass through unchanged. The older shape (shipped
+// briefly before splitting existed) stored a fixed vertexIdA/vertexIdB pair
+// plus an in-between `points` array for bend points -- each bend point now
+// becomes its own line boundary instead, so a line with N old bend points
+// expands into N+1 new lines here (always returns an array for that reason).
+function normalizeInternalLine(line) {
+  if (line.endpointA && line.endpointB) return [line]
+  const chain = [
+    { kind: 'vertex', vertexId: line.vertexIdA },
+    ...(line.points ?? []).map((p) => ({ kind: 'free', id: p.id, point: p.point })),
+    { kind: 'vertex', vertexId: line.vertexIdB },
+  ]
+  const segments = []
+  for (let i = 0; i < chain.length - 1; i++) {
+    segments.push({
+      id: i === 0 ? line.id : generateId(),
+      name: line.name,
+      sourcePieceId: line.sourcePieceId,
+      endpointA: chain[i],
+      endpointB: chain[i + 1],
+    })
+  }
+  return segments
+}
+
 // Fills in any document-level arrays missing from `document` (e.g. a pattern
 // saved before `internalLines` -- or any future field -- existed) with
 // emptyDocument()'s defaults, so loading an older saved pattern doesn't
 // crash on a missing array instead of just treating it as "none yet." Also
-// backfills each internalLine's `points` array (bend points added between
-// its two boundary-anchored ends) for lines saved before that existed.
+// migrates each internalLine to the current endpointA/endpointB shape.
 function normalizeDocument(document) {
   const merged = { ...emptyDocument(), ...document }
-  return { ...merged, internalLines: merged.internalLines.map((l) => ({ points: [], ...l })) }
+  return { ...merged, internalLines: merged.internalLines.flatMap(normalizeInternalLine) }
 }
 
 function initState(document) {
@@ -45,7 +70,7 @@ function initState(document) {
     selection: null, // { pieceId, vertexId }
     selectedPieceIds: [], // whole-piece selection, for merge/split/internal-line etc.
     selectedInternalLineId: null, // whole-internal-line selection (object-level, pairs with selectedPieceIds)
-    internalLineSelection: null, // { internalLineId, pointId } -- a single bend point (point-level, pairs with `selection`)
+    internalLineSelection: null, // { internalLineId, which: 'A' | 'B' } -- a single free endpoint (point-level, pairs with `selection`)
   }
 }
 
@@ -248,9 +273,8 @@ export function patternReducer(state, action) {
       return { ...state, selectedPieceIds: [], selectedInternalLineId: null }
 
     // Selects an internal line as a whole (object-level, like SELECT_PIECE)
-    // -- lets it be deleted via Delete, and is the "already selected" gate
-    // that turns a further click on its body into ADD_INTERNAL_LINE_POINT
-    // instead of re-selecting it.
+    // -- lets it be deleted via Delete, and shows it highlighted while the
+    // "내부선 점 추가" tool (SPLIT_INTERNAL_LINE) is used on it.
     case 'SELECT_INTERNAL_LINE':
       return {
         ...state,
@@ -260,13 +284,13 @@ export function patternReducer(state, action) {
         internalLineSelection: null,
       }
 
-    // Selects one bend point of an internal line (point-level, like
-    // SELECT_VERTEX) -- also marks the owning line as the selected object,
-    // so it stays highlighted while one of its points is being edited.
+    // Selects one free (non-piece-boundary) endpoint of an internal line
+    // (point-level, like SELECT_VERTEX) -- also marks the owning line as the
+    // selected object, so it stays highlighted while that endpoint is dragged.
     case 'SELECT_INTERNAL_LINE_POINT':
       return {
         ...state,
-        internalLineSelection: { internalLineId: action.internalLineId, pointId: action.pointId },
+        internalLineSelection: { internalLineId: action.internalLineId, which: action.which },
         selectedInternalLineId: action.internalLineId,
         selection: null,
         selectedPieceIds: [],
@@ -323,9 +347,8 @@ export function patternReducer(state, action) {
         id: generateId(),
         name: `내부선`,
         sourcePieceId: closedPieceId,
-        vertexIdA: newVertexIds[0],
-        vertexIdB: newVertexIds[1],
-        points: [], // bend points added later via ADD_INTERNAL_LINE_POINT
+        endpointA: { kind: 'vertex', vertexId: newVertexIds[0] },
+        endpointB: { kind: 'vertex', vertexId: newVertexIds[1] },
       }
 
       const nextDoc = {
@@ -346,49 +369,68 @@ export function patternReducer(state, action) {
       }
     }
 
-    // Inserts a bend point into an internal line's own point list (not the
-    // piece's boundary -- these live only on the line), turning it from a
-    // straight A-B segment into an editable multi-segment polyline. Canvas
-    // computes `insertIndex` via projectPointToPolyline on the line's full
-    // point chain [A, ...points, B]; that function's edgeIndex already means
-    // exactly "insert after this index" here, so it's passed straight through.
-    case 'ADD_INTERNAL_LINE_POINT': {
-      const { internalLineId, point, insertIndex } = action
+    // Splits an internal line into two at `point` (a point on the line, as
+    // found by canvas's projectPointToPolyline while the "점 추가" tool is
+    // armed): the original line is replaced by two new lines, each an
+    // independent straight segment, so they can be selected/edited/stitched
+    // separately afterward. The new shared location becomes each half's own
+    // free endpoint -- they start coincident but are NOT kept in sync, so
+    // dragging one half's split end doesn't drag the other's (matches how
+    // SPLIT_PIECE produces independent pieces rather than linked ones).
+    // Whatever was selected before is cleared in favor of the "front" half
+    // (the one on endpointA's side of the split).
+    case 'SPLIT_INTERNAL_LINE': {
+      const { internalLineId, point } = action
       const line = state.document.internalLines.find((l) => l.id === internalLineId)
       if (!line) return state
-      const newPoint = { id: generateId(), point }
-      const points = [...line.points.slice(0, insertIndex), newPoint, ...line.points.slice(insertIndex)]
-      const nextInternalLines = state.document.internalLines.map((l) =>
-        l.id === internalLineId ? { ...l, points } : l
-      )
+
+      const lineA = {
+        id: generateId(),
+        name: line.name,
+        sourcePieceId: line.sourcePieceId,
+        endpointA: line.endpointA,
+        endpointB: { kind: 'free', id: generateId(), point },
+      }
+      const lineB = {
+        id: generateId(),
+        name: line.name,
+        sourcePieceId: line.sourcePieceId,
+        endpointA: { kind: 'free', id: generateId(), point },
+        endpointB: line.endpointB,
+      }
+
+      const nextDoc = {
+        ...state.document,
+        internalLines: [
+          ...state.document.internalLines.filter((l) => l.id !== internalLineId),
+          lineA,
+          lineB,
+        ],
+        // The split changes the line's geometry, so any stitch line placed
+        // on the original no longer has a single line to follow.
+        stitchLines: state.document.stitchLines.filter((s) => s.sourceInternalLineId !== internalLineId),
+      }
+
       return {
-        ...commit(state, { ...state.document, internalLines: nextInternalLines }),
+        ...commit(state, nextDoc),
+        toolMode: 'select',
         selection: null,
         selectedPieceIds: [],
-        selectedInternalLineId: internalLineId,
-        internalLineSelection: { internalLineId, pointId: newPoint.id },
+        selectedInternalLineId: lineA.id,
+        internalLineSelection: null,
       }
     }
 
-    case 'MOVE_INTERNAL_LINE_POINT': {
-      const { internalLineId, pointId, point } = action
-      const nextInternalLines = state.document.internalLines.map((l) =>
-        l.id !== internalLineId
-          ? l
-          : { ...l, points: l.points.map((p) => (p.id === pointId ? { ...p, point } : p)) }
-      )
+    // Moves a free (non-piece-boundary) internal-line endpoint -- the split
+    // points created by SPLIT_INTERNAL_LINE. `which` is 'A' or 'B'.
+    case 'MOVE_INTERNAL_LINE_ENDPOINT': {
+      const { internalLineId, which, point } = action
+      const key = which === 'A' ? 'endpointA' : 'endpointB'
+      const nextInternalLines = state.document.internalLines.map((l) => {
+        if (l.id !== internalLineId || l[key].kind !== 'free') return l
+        return { ...l, [key]: { ...l[key], point } }
+      })
       return commit(state, { ...state.document, internalLines: nextInternalLines })
-    }
-
-    case 'DELETE_INTERNAL_LINE_POINT': {
-      const { internalLineId, pointId } = action
-      const nextInternalLines = state.document.internalLines.map((l) =>
-        l.id !== internalLineId ? l : { ...l, points: l.points.filter((p) => p.id !== pointId) }
-      )
-      const nextState = commit(state, { ...state.document, internalLines: nextInternalLines })
-      const hadSelection = state.internalLineSelection?.internalLineId === internalLineId &&
-        state.internalLineSelection?.pointId === pointId
-      return hadSelection ? { ...nextState, internalLineSelection: null } : nextState
     }
 
     // Un-marks the fold/score line itself (its endpoints stay as ordinary
@@ -656,15 +698,14 @@ export function patternReducer(state, action) {
       )
       // An internal line's endpoint no longer exists -- the line goes with
       // it, and so does any stitch line that was placed along that line.
-      const removedInternalLineIds = state.document.internalLines
-        .filter((l) => l.vertexIdA === action.vertexId || l.vertexIdB === action.vertexId)
-        .map((l) => l.id)
+      const referencesVertex = (l) =>
+        (l.endpointA.kind === 'vertex' && l.endpointA.vertexId === action.vertexId) ||
+        (l.endpointB.kind === 'vertex' && l.endpointB.vertexId === action.vertexId)
+      const removedInternalLineIds = state.document.internalLines.filter(referencesVertex).map((l) => l.id)
       const nextDoc = {
         ...state.document,
         pieces: nextPieces,
-        internalLines: state.document.internalLines.filter(
-          (l) => l.vertexIdA !== action.vertexId && l.vertexIdB !== action.vertexId
-        ),
+        internalLines: state.document.internalLines.filter((l) => !referencesVertex(l)),
         stitchLines: state.document.stitchLines.filter(
           (s) => !removedInternalLineIds.includes(s.sourceInternalLineId)
         ),

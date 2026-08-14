@@ -169,6 +169,14 @@ function Toolbar({ state, dispatch, actualSize, onToggleActualSize, calibrated, 
         onClick={handleAddInternalLine}
         title="닫힌 도형 1개 + 가로지르는 선 1개를 선택하면, 도형은 둘로 나누지 않고 그대로 두면서 교차점 2개를 도형의 진짜 꼭짓점으로 추가하고 그 사이를 내부선(접는선/스티치 가이드)으로 남깁니다"
       />
+      <ToolButton
+        icon="➕"
+        label="내부선 점 추가"
+        active={toolMode === 'internal-point'}
+        disabled={document.internalLines.length === 0}
+        onClick={() => dispatch({ type: 'SET_TOOL_MODE', mode: 'internal-point' })}
+        title="이 버튼을 누른 뒤 내부선을 클릭하면, 그 자리에서 내부선이 둘로 나뉘어 각각 따로 선택할 수 있게 됩니다"
+      />
 
       <Divider />
 

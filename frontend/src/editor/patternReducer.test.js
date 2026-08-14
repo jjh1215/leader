@@ -498,7 +498,9 @@ describe('patternReducer', () => {
       expect(state.document.internalLines).toHaveLength(1)
       const line = state.document.internalLines[0]
       expect(line.sourcePieceId).toBe(rectId)
-      const lineVertexIds = new Set([line.vertexIdA, line.vertexIdB])
+      expect(line.endpointA.kind).toBe('vertex')
+      expect(line.endpointB.kind).toBe('vertex')
+      const lineVertexIds = new Set([line.endpointA.vertexId, line.endpointB.vertexId])
       const lineVertices = piece.vertices.filter((v) => lineVertexIds.has(v.id))
       expect(lineVertices.map((v) => v.point).sort((a, b) => a.x - b.x)).toEqual([
         { x: 0, y: 5 },
@@ -528,7 +530,7 @@ describe('patternReducer', () => {
       state = patternReducer(state, { type: 'ADD_INTERNAL_LINE', closedPieceId: rectId, linePieceId: lineId })
       expect(state.document.internalLines).toHaveLength(1)
 
-      const endpointId = state.document.internalLines[0].vertexIdA
+      const endpointId = state.document.internalLines[0].endpointA.vertexId
       state = patternReducer(state, { type: 'DELETE_VERTEX', pieceId: rectId, vertexId: endpointId })
       expect(state.document.internalLines).toHaveLength(0)
     })
@@ -547,7 +549,7 @@ describe('patternReducer', () => {
       })
       expect(state.document.stitchLines).toHaveLength(1)
 
-      const endpointId = state.document.internalLines[0].vertexIdA
+      const endpointId = state.document.internalLines[0].endpointA.vertexId
       state = patternReducer(state, { type: 'DELETE_VERTEX', pieceId: rectId, vertexId: endpointId })
       expect(state.document.internalLines).toHaveLength(0)
       expect(state.document.stitchLines).toHaveLength(0)
@@ -592,73 +594,69 @@ describe('patternReducer', () => {
       expect(state.selection).toBeNull()
     })
 
-    it('ADD_INTERNAL_LINE_POINT inserts a bend point at the given index and selects it', () => {
+    it('SPLIT_INTERNAL_LINE replaces the line with two independent lines meeting at the split point', () => {
       const { state: setup, internalLineId } = setupInternalLine()
+      const originalLine = setup.document.internalLines[0]
       const state = patternReducer(setup, {
-        type: 'ADD_INTERNAL_LINE_POINT',
+        type: 'SPLIT_INTERNAL_LINE',
         internalLineId,
         point: { x: 5, y: 5 },
-        insertIndex: 0,
       })
-      const line = state.document.internalLines.find((l) => l.id === internalLineId)
-      expect(line.points).toHaveLength(1)
-      expect(line.points[0].point).toEqual({ x: 5, y: 5 })
-      expect(state.internalLineSelection).toEqual({ internalLineId, pointId: line.points[0].id })
-      expect(state.selectedInternalLineId).toBe(internalLineId)
+
+      expect(state.document.internalLines).toHaveLength(2)
+      const [lineA, lineB] = state.document.internalLines
+      // The original line is gone -- replaced, not mutated.
+      expect(state.document.internalLines.find((l) => l.id === internalLineId)).toBeUndefined()
+      // Line A keeps the original's A-side endpoint; line B keeps the original's B-side endpoint.
+      expect(lineA.endpointA).toEqual(originalLine.endpointA)
+      expect(lineB.endpointB).toEqual(originalLine.endpointB)
+      // Both meet at the split point, but as independent (not shared-id) free endpoints.
+      expect(lineA.endpointB.kind).toBe('free')
+      expect(lineA.endpointB.point).toEqual({ x: 5, y: 5 })
+      expect(lineB.endpointA.kind).toBe('free')
+      expect(lineB.endpointA.point).toEqual({ x: 5, y: 5 })
+      expect(lineA.endpointB.id).not.toBe(lineB.endpointA.id)
     })
 
-    it('a second ADD_INTERNAL_LINE_POINT respects insertIndex ordering', () => {
+    it('SPLIT_INTERNAL_LINE clears prior selection and selects the front (A-side) half', () => {
       const { state: setup, internalLineId } = setupInternalLine()
-      let state = patternReducer(setup, {
-        type: 'ADD_INTERNAL_LINE_POINT',
-        internalLineId,
-        point: { x: 5, y: 5 },
-        insertIndex: 0,
-      })
-      // Insert before the first bend point (index 0 again -- "between A and the first point").
-      state = patternReducer(state, {
-        type: 'ADD_INTERNAL_LINE_POINT',
-        internalLineId,
-        point: { x: 2, y: 5 },
-        insertIndex: 0,
-      })
-      const line = state.document.internalLines.find((l) => l.id === internalLineId)
-      expect(line.points.map((p) => p.point)).toEqual([
-        { x: 2, y: 5 },
-        { x: 5, y: 5 },
-      ])
+      const selected = patternReducer(setup, { type: 'SELECT_INTERNAL_LINE', internalLineId })
+      const state = patternReducer(selected, { type: 'SPLIT_INTERNAL_LINE', internalLineId, point: { x: 5, y: 5 } })
+
+      const [lineA] = state.document.internalLines
+      expect(state.selectedInternalLineId).toBe(lineA.id)
+      expect(state.internalLineSelection).toBeNull()
+      expect(state.selectedPieceIds).toEqual([])
+      expect(state.selection).toBeNull()
+      expect(state.toolMode).toBe('select')
     })
 
-    it('MOVE_INTERNAL_LINE_POINT updates the bend point coordinates', () => {
+    it('SPLIT_INTERNAL_LINE drops any stitch line that was placed on the pre-split line', () => {
       const { state: setup, internalLineId } = setupInternalLine()
-      let state = patternReducer(setup, {
-        type: 'ADD_INTERNAL_LINE_POINT',
-        internalLineId,
-        point: { x: 5, y: 5 },
-        insertIndex: 0,
+      const withStitch = patternReducer(setup, {
+        type: 'ADD_STITCH_LINE',
+        stitchLine: { id: 's1', name: 's', sourceInternalLineId: internalLineId, insetDistance: 1, stitchPatternDefId: 'd1' },
       })
-      const pointId = state.document.internalLines[0].points[0].id
+      const state = patternReducer(withStitch, { type: 'SPLIT_INTERNAL_LINE', internalLineId, point: { x: 5, y: 5 } })
+      expect(state.document.stitchLines).toHaveLength(0)
+    })
+
+    it('MOVE_INTERNAL_LINE_ENDPOINT updates only the targeted free endpoint of one line', () => {
+      const { state: setup, internalLineId } = setupInternalLine()
+      let state = patternReducer(setup, { type: 'SPLIT_INTERNAL_LINE', internalLineId, point: { x: 5, y: 5 } })
+      const [lineA, lineB] = state.document.internalLines
+
       state = patternReducer(state, {
-        type: 'MOVE_INTERNAL_LINE_POINT',
-        internalLineId,
-        pointId,
+        type: 'MOVE_INTERNAL_LINE_ENDPOINT',
+        internalLineId: lineA.id,
+        which: 'B',
         point: { x: 5, y: 8 },
       })
-      expect(state.document.internalLines[0].points[0].point).toEqual({ x: 5, y: 8 })
-    })
 
-    it('DELETE_INTERNAL_LINE_POINT removes the bend point and clears its selection', () => {
-      const { state: setup, internalLineId } = setupInternalLine()
-      let state = patternReducer(setup, {
-        type: 'ADD_INTERNAL_LINE_POINT',
-        internalLineId,
-        point: { x: 5, y: 5 },
-        insertIndex: 0,
-      })
-      const pointId = state.document.internalLines[0].points[0].id
-      state = patternReducer(state, { type: 'DELETE_INTERNAL_LINE_POINT', internalLineId, pointId })
-      expect(state.document.internalLines[0].points).toHaveLength(0)
-      expect(state.internalLineSelection).toBeNull()
+      const movedLineA = state.document.internalLines.find((l) => l.id === lineA.id)
+      const untouchedLineB = state.document.internalLines.find((l) => l.id === lineB.id)
+      expect(movedLineA.endpointB.point).toEqual({ x: 5, y: 8 })
+      expect(untouchedLineB.endpointA.point).toEqual({ x: 5, y: 5 }) // not synced -- independent endpoints
     })
 
     it('DELETE_INTERNAL_LINE removes the line and its stitch lines, but leaves the piece boundary intact', () => {
@@ -739,7 +737,7 @@ describe('patternReducer', () => {
       expect(state.document.internalLines).toEqual([])
     })
 
-    it('backfills `points: []` on an internalLine saved before bend points existed', () => {
+    it('migrates a legacy vertexIdA/vertexIdB internalLine to the endpointA/endpointB shape', () => {
       const legacyDocument = {
         pieces: [],
         stitchPatternDefs: [],
@@ -748,7 +746,42 @@ describe('patternReducer', () => {
         internalLines: [{ id: 'l1', name: '내부선', sourcePieceId: 'p1', vertexIdA: 'v1', vertexIdB: 'v2' }],
       }
       const state = patternReducer(undefined, { type: 'LOAD', document: legacyDocument })
-      expect(state.document.internalLines[0].points).toEqual([])
+      expect(state.document.internalLines).toEqual([
+        {
+          id: 'l1',
+          name: '내부선',
+          sourcePieceId: 'p1',
+          endpointA: { kind: 'vertex', vertexId: 'v1' },
+          endpointB: { kind: 'vertex', vertexId: 'v2' },
+        },
+      ])
+    })
+
+    it('expands a legacy internalLine with bend points into one line per segment', () => {
+      const legacyDocument = {
+        pieces: [],
+        stitchPatternDefs: [],
+        stitchLines: [],
+        offsetPaths: [],
+        internalLines: [
+          {
+            id: 'l1',
+            name: '내부선',
+            sourcePieceId: 'p1',
+            vertexIdA: 'v1',
+            vertexIdB: 'v2',
+            points: [{ id: 'bp1', point: { x: 5, y: 5 } }],
+          },
+        ],
+      }
+      const state = patternReducer(undefined, { type: 'LOAD', document: legacyDocument })
+      expect(state.document.internalLines).toHaveLength(2)
+      const [first, second] = state.document.internalLines
+      expect(first.id).toBe('l1') // the first segment keeps the original id
+      expect(first.endpointA).toEqual({ kind: 'vertex', vertexId: 'v1' })
+      expect(first.endpointB).toEqual({ kind: 'free', id: 'bp1', point: { x: 5, y: 5 } })
+      expect(second.endpointA).toEqual({ kind: 'free', id: 'bp1', point: { x: 5, y: 5 } })
+      expect(second.endpointB).toEqual({ kind: 'vertex', vertexId: 'v2' })
     })
   })
 })

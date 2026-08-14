@@ -63,7 +63,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
   const [hoverDock, setHoverDock] = useState(null) // dock the hoverPoint is currently snapped to, if any
   const [marquee, setMarquee] = useState(null) // transient drag-select box: { start, end, additive }
   const [pieceDrag, setPieceDrag] = useState(null) // whole-piece move: { pieceIds, start, current }
-  const [dragInternalPoint, setDragInternalPoint] = useState(null) // transient preview: { internalLineId, pointId, point }
+  const [dragInternalPoint, setDragInternalPoint] = useState(null) // transient preview: { internalLineId, which, point }
 
   const { document, toolMode, activePieceId, selection, selectedPieceIds, selectedInternalLineId, internalLineSelection } =
     state
@@ -161,42 +161,57 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     return best
   }
 
-  // An internal line's full point chain in document order: its two
-  // boundary-anchored ends plus whatever bend points have been inserted
-  // between them, each resolved to its live (in-progress-drag) position.
-  // Shared by hit-testing, rendering, and stitch-hole placement so all
-  // three always agree on the line's current shape.
-  function internalLineFullPoints(line) {
-    const piece = document.pieces.find((p) => p.id === line.sourcePieceId)
-    if (!piece) return null
-    const a = piece.vertices.find((v) => v.id === line.vertexIdA)
-    const b = piece.vertices.find((v) => v.id === line.vertexIdB)
-    if (!a || !b) return null
-    return [
-      liveVertexPoint(piece.id, a),
-      ...line.points.map((p) => liveInternalPoint(line.id, p)),
-      liveVertexPoint(piece.id, b),
-    ]
-  }
-
-  function liveInternalPoint(internalLineId, bendPoint) {
-    if (dragInternalPoint && dragInternalPoint.internalLineId === internalLineId && dragInternalPoint.pointId === bendPoint.id) {
+  // Resolves one internal-line endpoint to its live (in-progress-drag)
+  // position -- a 'vertex' endpoint follows the piece it's anchored to
+  // (same as any other piece vertex); a 'free' endpoint (created by
+  // SPLIT_INTERNAL_LINE) follows its own drag, if one is in progress.
+  function liveInternalEndpointPoint(line, which) {
+    const ep = which === 'A' ? line.endpointA : line.endpointB
+    if (ep.kind === 'vertex') {
+      const piece = document.pieces.find((p) => p.id === line.sourcePieceId)
+      const v = piece?.vertices.find((vv) => vv.id === ep.vertexId)
+      return v ? liveVertexPoint(piece.id, v) : null
+    }
+    if (dragInternalPoint && dragInternalPoint.internalLineId === line.id && dragInternalPoint.which === which) {
       return dragInternalPoint.point
     }
-    return bendPoint.point
+    return ep.point
   }
 
-  function findNearestInternalLinePoint(point) {
+  // The committed (pre-drag) position of an endpoint, for the "before"
+  // ghost line shown while dragging -- unlike liveInternalEndpointPoint,
+  // never reflects an in-progress drag.
+  function internalEndpointOriginalPoint(line, which) {
+    const ep = which === 'A' ? line.endpointA : line.endpointB
+    if (ep.kind === 'vertex') {
+      const piece = document.pieces.find((p) => p.id === line.sourcePieceId)
+      return piece?.vertices.find((v) => v.id === ep.vertexId)?.point ?? null
+    }
+    return ep.point
+  }
+
+  // An internal line is always a straight 2-endpoint segment. Shared by
+  // hit-testing, rendering, and stitch-hole placement so all three always
+  // agree on the line's current (possibly mid-drag) shape.
+  function internalLineFullPoints(line) {
+    const a = liveInternalEndpointPoint(line, 'A')
+    const b = liveInternalEndpointPoint(line, 'B')
+    return a && b ? [a, b] : null
+  }
+
+  function findNearestInternalLineFreeEndpoint(point) {
     const threshold = hitRadiusMm()
     let best = null
     let bestDist = threshold
     for (const line of document.internalLines) {
-      for (const p of line.points) {
-        const live = liveInternalPoint(line.id, p)
+      for (const which of ['A', 'B']) {
+        const ep = which === 'A' ? line.endpointA : line.endpointB
+        if (ep.kind !== 'free') continue
+        const live = liveInternalEndpointPoint(line, which)
         const d = Math.hypot(live.x - point.x, live.y - point.y)
         if (d < bestDist) {
           bestDist = d
-          best = { internalLineId: line.id, pointId: p.id, point: live }
+          best = { internalLineId: line.id, which, point: live }
         }
       }
     }
@@ -259,6 +274,23 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       return
     }
 
+    // "점 추가" tool, armed via its own toolbar button: clicking any internal
+    // line splits it in two at the clicked point (see SPLIT_INTERNAL_LINE).
+    // Requiring the button avoids overloading a plain click on an
+    // already-selected line, which just re-selects it instead.
+    if (toolMode === 'internal-point') {
+      const internalLineHit = findNearestInternalLine(point)
+      if (internalLineHit) {
+        const line = document.internalLines.find((l) => l.id === internalLineHit)
+        const full = internalLineFullPoints(line)
+        const proj = full && projectPointToPolyline(point, full, false)
+        if (proj) {
+          dispatch({ type: 'SPLIT_INTERNAL_LINE', internalLineId: internalLineHit, point: proj.point })
+        }
+      }
+      return
+    }
+
     if (toolMode === 'select') {
       const hit = findNearestVertex(point)
       if (hit) {
@@ -269,28 +301,16 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         return
       }
 
-      const pointHit = findNearestInternalLinePoint(point)
+      const pointHit = findNearestInternalLineFreeEndpoint(point)
       if (pointHit) {
-        dispatch({ type: 'SELECT_INTERNAL_LINE_POINT', internalLineId: pointHit.internalLineId, pointId: pointHit.pointId })
+        dispatch({ type: 'SELECT_INTERNAL_LINE_POINT', internalLineId: pointHit.internalLineId, which: pointHit.which })
         setDragInternalPoint(pointHit)
         return
       }
 
       const internalLineHit = findNearestInternalLine(point)
       if (internalLineHit) {
-        if (internalLineHit === selectedInternalLineId) {
-          // Already selected -- a further click on the line body inserts a
-          // new bend point there instead of just re-selecting it (mirrors
-          // "click again to add a point," as agreed with the user).
-          const line = document.internalLines.find((l) => l.id === internalLineHit)
-          const full = internalLineFullPoints(line)
-          const proj = full && projectPointToPolyline(point, full, false)
-          if (proj) {
-            dispatch({ type: 'ADD_INTERNAL_LINE_POINT', internalLineId: internalLineHit, point: proj.point, insertIndex: proj.edgeIndex })
-          }
-        } else {
-          dispatch({ type: 'SELECT_INTERNAL_LINE', internalLineId: internalLineHit })
-        }
+        dispatch({ type: 'SELECT_INTERNAL_LINE', internalLineId: internalLineHit })
         return
       }
 
@@ -388,9 +408,9 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     }
     if (dragInternalPoint) {
       dispatch({
-        type: 'MOVE_INTERNAL_LINE_POINT',
+        type: 'MOVE_INTERNAL_LINE_ENDPOINT',
         internalLineId: dragInternalPoint.internalLineId,
-        pointId: dragInternalPoint.pointId,
+        which: dragInternalPoint.which,
         point: dragInternalPoint.point,
       })
       setDragInternalPoint(null)
@@ -463,13 +483,11 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
 
   function handleKeyDown(e) {
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      if (internalLineSelection) {
-        dispatch({
-          type: 'DELETE_INTERNAL_LINE_POINT',
-          internalLineId: internalLineSelection.internalLineId,
-          pointId: internalLineSelection.pointId,
-        })
-      } else if (selectedInternalLineId) {
+      // A selected free endpoint (internalLineSelection) always implies its
+      // owning line is also the selected object, so this one branch covers
+      // both "a whole internal line is selected" and "one of its split
+      // endpoints is selected" -- either way, Delete removes that line.
+      if (selectedInternalLineId) {
         dispatch({ type: 'DELETE_INTERNAL_LINE', internalLineId: selectedInternalLineId })
       } else if (selection) {
         dispatch({ type: 'DELETE_VERTEX', pieceId: selection.pieceId, vertexId: selection.vertexId })
@@ -480,6 +498,8 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       dispatch({ type: 'END_OPEN_PATH' })
       setHoverPoint(null)
       setHoverDock(null)
+    } else if (e.key === 'Escape' && toolMode === 'internal-point') {
+      dispatch({ type: 'SET_TOOL_MODE', mode: 'select' })
     }
   }
 
@@ -539,7 +559,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         cursor:
           toolMode === 'pan'
             ? 'grab'
-            : toolMode === 'draw-line' || toolMode === 'rect' || toolMode === 'line'
+            : toolMode === 'draw-line' || toolMode === 'rect' || toolMode === 'line' || toolMode === 'internal-point'
               ? 'crosshair'
               : 'default',
       }}
@@ -612,15 +632,9 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       })}
 
       {document.internalLines.map((line) => {
-        const piece = document.pieces.find((p) => p.id === line.sourcePieceId)
-        if (!piece) return null
-        const a = piece.vertices.find((v) => v.id === line.vertexIdA)
-        const b = piece.vertices.find((v) => v.id === line.vertexIdB)
-        if (!a || !b) return null
-
         const liveFull = internalLineFullPoints(line)
         if (!liveFull) return null
-        const originalFull = [a.point, ...line.points.map((p) => p.point), b.point]
+        const originalFull = [internalEndpointOriginalPoint(line, 'A'), internalEndpointOriginalPoint(line, 'B')]
         const isMoving = liveFull.some((p, i) => p !== originalFull[i])
         const isSelected = line.id === selectedInternalLineId
 
@@ -648,12 +662,15 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
               vectorEffect="non-scaling-stroke"
             />
             {toolMode === 'select' &&
-              line.points.map((p) => {
-                const live = liveInternalPoint(line.id, p)
-                const isPointSelected = internalLineSelection?.pointId === p.id
+              ['A', 'B'].map((which) => {
+                const ep = which === 'A' ? line.endpointA : line.endpointB
+                if (ep.kind !== 'free') return null
+                const live = liveInternalEndpointPoint(line, which)
+                const isPointSelected =
+                  internalLineSelection?.internalLineId === line.id && internalLineSelection?.which === which
                 return (
                   <circle
-                    key={p.id}
+                    key={which}
                     cx={live.x}
                     cy={live.y}
                     r={isPointSelected ? vertexRadiusMm * 1.5 : vertexRadiusMm}

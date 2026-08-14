@@ -121,11 +121,15 @@ function DimensionPanel({ state, dispatch }) {
     ? document.pieces.find((p) => p.id === selection.pieceId)?.vertices.find((v) => v.id === selection.vertexId)
     : null
 
-  const selectedInternalLinePoint = internalLineSelection
-    ? document.internalLines
-        .find((l) => l.id === internalLineSelection.internalLineId)
-        ?.points.find((p) => p.id === internalLineSelection.pointId)
+  const selectedInternalLineForPoint = internalLineSelection
+    ? document.internalLines.find((l) => l.id === internalLineSelection.internalLineId)
     : null
+  const selectedInternalLinePoint =
+    selectedInternalLineForPoint && internalLineSelection.which === 'A'
+      ? selectedInternalLineForPoint.endpointA
+      : selectedInternalLineForPoint
+        ? selectedInternalLineForPoint.endpointB
+        : null
 
   const singleSelectedPiece =
     selectedPieceIds.length === 1 ? document.pieces.find((p) => p.id === selectedPieceIds[0]) : null
@@ -161,9 +165,9 @@ function DimensionPanel({ state, dispatch }) {
             value={Number(selectedInternalLinePoint.point.x.toFixed(3))}
             onChange={(e) =>
               dispatch({
-                type: 'MOVE_INTERNAL_LINE_POINT',
+                type: 'MOVE_INTERNAL_LINE_ENDPOINT',
                 internalLineId: internalLineSelection.internalLineId,
-                pointId: internalLineSelection.pointId,
+                which: internalLineSelection.which,
                 point: {
                   x: num(e.target.value, selectedInternalLinePoint.point.x),
                   y: selectedInternalLinePoint.point.y,
@@ -177,9 +181,9 @@ function DimensionPanel({ state, dispatch }) {
             value={Number(selectedInternalLinePoint.point.y.toFixed(3))}
             onChange={(e) =>
               dispatch({
-                type: 'MOVE_INTERNAL_LINE_POINT',
+                type: 'MOVE_INTERNAL_LINE_ENDPOINT',
                 internalLineId: internalLineSelection.internalLineId,
-                pointId: internalLineSelection.pointId,
+                which: internalLineSelection.which,
                 point: {
                   x: selectedInternalLinePoint.point.x,
                   y: num(e.target.value, selectedInternalLinePoint.point.y),
