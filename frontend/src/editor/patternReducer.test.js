@@ -294,4 +294,144 @@ describe('patternReducer', () => {
       expect(state).not.toBe(before) // sanity: undo landed on a fresh object, not a no-op
     })
   })
+
+  describe('edge docking (live constraint)', () => {
+    it('a vertex docked to a host edge follows it when the host is resized', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const hostId = state.document.pieces[0].id
+
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: 20, y: 20 }, end: { x: 25, y: 25 } })
+      const linePieceId = state.document.pieces[1].id
+      const vertexId = state.document.pieces[1].vertices[0].id
+
+      // Dock that line's first vertex to the host's bottom edge (edgeIndex 0), midpoint.
+      state = patternReducer(state, {
+        type: 'MOVE_VERTEX',
+        pieceId: linePieceId,
+        vertexId,
+        point: { x: 5, y: 0 },
+        dock: { kind: 'edge', targetPieceId: hostId, edgeIndex: 0, t: 0.5 },
+      })
+      const dockedVertex = () => state.document.pieces.find((p) => p.id === linePieceId).vertices[0]
+      expect(dockedVertex().point).toEqual({ x: 5, y: 0 })
+
+      // Resize the host -- the docked point must follow the new edge position.
+      state = patternReducer(state, {
+        type: 'SET_RECT_DIMENSIONS',
+        pieceId: hostId,
+        minX: 0,
+        minY: 0,
+        width: 40,
+        height: 10,
+      })
+      expect(dockedVertex().point).toEqual({ x: 20, y: 0 })
+      expect(dockedVertex().dock).not.toBeNull()
+    })
+
+    it('breaks the dock (keeps last position) when the host piece is deleted', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const hostId = state.document.pieces[0].id
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: 20, y: 20 }, end: { x: 25, y: 25 } })
+      const linePieceId = state.document.pieces[1].id
+      const vertexId = state.document.pieces[1].vertices[0].id
+
+      state = patternReducer(state, {
+        type: 'MOVE_VERTEX',
+        pieceId: linePieceId,
+        vertexId,
+        point: { x: 5, y: 0 },
+        dock: { kind: 'edge', targetPieceId: hostId, edgeIndex: 0, t: 0.5 },
+      })
+      state = patternReducer(state, { type: 'DELETE_PIECE', pieceId: hostId })
+
+      const v = state.document.pieces.find((p) => p.id === linePieceId).vertices[0]
+      expect(v.dock).toBeNull()
+      expect(v.point).toEqual({ x: 5, y: 0 })
+    })
+
+    it('a plain MOVE_VERTEX with no dock argument clears any prior dock (does not silently snap back)', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const hostId = state.document.pieces[0].id
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: 20, y: 20 }, end: { x: 25, y: 25 } })
+      const linePieceId = state.document.pieces[1].id
+      const vertexId = state.document.pieces[1].vertices[0].id
+
+      state = patternReducer(state, {
+        type: 'MOVE_VERTEX',
+        pieceId: linePieceId,
+        vertexId,
+        point: { x: 5, y: 0 },
+        dock: { kind: 'edge', targetPieceId: hostId, edgeIndex: 0, t: 0.5 },
+      })
+      // Drag it away with no dock -- must land exactly at (50,50), not get
+      // pulled back to the host edge by the next commit's resolveDocks pass.
+      state = patternReducer(state, { type: 'MOVE_VERTEX', pieceId: linePieceId, vertexId, point: { x: 50, y: 50 } })
+      const v = state.document.pieces.find((p) => p.id === linePieceId).vertices[0]
+      expect(v.point).toEqual({ x: 50, y: 50 })
+      expect(v.dock).toBeNull()
+    })
+  })
+
+  describe('SPLIT_PIECE', () => {
+    it('splits a rectangle into two closed pieces along a crossing line, consuming both inputs', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const rectId = state.document.pieces[0].id
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: -5, y: 5 }, end: { x: 15, y: 5 } })
+      const lineId = state.document.pieces[1].id
+
+      state = patternReducer(state, { type: 'SPLIT_PIECE', closedPieceId: rectId, linePieceId: lineId })
+      expect(state.document.pieces).toHaveLength(2)
+      expect(state.document.pieces.every((p) => p.closed)).toBe(true)
+      expect(state.document.pieces.find((p) => p.id === rectId)).toBeUndefined()
+      expect(state.document.pieces.find((p) => p.id === lineId)).toBeUndefined()
+
+      const bbox = (piece) => {
+        const xs = piece.vertices.map((v) => v.point.x)
+        const ys = piece.vertices.map((v) => v.point.y)
+        return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) }
+      }
+      const bboxes = state.document.pieces.map(bbox).sort((a, b) => a.minY - b.minY)
+      expect(bboxes[0]).toEqual({ minX: 0, maxX: 10, minY: 0, maxY: 5 })
+      expect(bboxes[1]).toEqual({ minX: 0, maxX: 10, minY: 5, maxY: 10 })
+    })
+
+    it('is a no-op when the line does not cross the shape exactly twice', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const rectId = state.document.pieces[0].id
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: 20, y: 20 }, end: { x: 30, y: 30 } })
+      const lineId = state.document.pieces[1].id
+
+      const before = state
+      state = patternReducer(state, { type: 'SPLIT_PIECE', closedPieceId: rectId, linePieceId: lineId })
+      expect(state).toBe(before)
+    })
+  })
+
+  describe('MERGE_PIECES on two closed pieces', () => {
+    it('unions two split halves back into one piece with the original bounding box', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const rectId = state.document.pieces[0].id
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: -5, y: 5 }, end: { x: 15, y: 5 } })
+      const lineId = state.document.pieces[1].id
+      state = patternReducer(state, { type: 'SPLIT_PIECE', closedPieceId: rectId, linePieceId: lineId })
+      const [idA, idB] = state.document.pieces.map((p) => p.id)
+
+      state = patternReducer(state, { type: 'MERGE_PIECES', pieceIdA: idA, pieceIdB: idB })
+      expect(state.document.pieces).toHaveLength(1)
+      const merged = state.document.pieces[0]
+      expect(merged.closed).toBe(true)
+      const xs = merged.vertices.map((v) => v.point.x)
+      const ys = merged.vertices.map((v) => v.point.y)
+      expect(Math.min(...xs)).toBeCloseTo(0, 6)
+      expect(Math.max(...xs)).toBeCloseTo(10, 6)
+      expect(Math.min(...ys)).toBeCloseTo(0, 6)
+      expect(Math.max(...ys)).toBeCloseTo(10, 6)
+    })
+  })
 })

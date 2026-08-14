@@ -1,3 +1,6 @@
+import { flattenToPolygon } from './geometry/fillet.js'
+import { splitClosedPolygonByLine } from './geometry/splitPolygon.js'
+
 const baseButtonStyle = {
   display: 'inline-flex',
   alignItems: 'center',
@@ -48,9 +51,39 @@ function Divider() {
 function Toolbar({ state, dispatch, actualSize, onToggleActualSize, calibrated, onOpenCalibration }) {
   const { toolMode, document, selectedPieceIds, past, future } = state
 
+  const twoSelected =
+    selectedPieceIds.length === 2
+      ? selectedPieceIds.map((id) => document.pieces.find((p) => p.id === id)).filter(Boolean)
+      : []
+
   const canMerge =
-    selectedPieceIds.length === 2 &&
-    selectedPieceIds.every((id) => document.pieces.find((p) => p.id === id && !p.closed))
+    twoSelected.length === 2 && (twoSelected.every((p) => !p.closed) || twoSelected.every((p) => p.closed))
+
+  // Split needs exactly one closed piece (the face) + one open 2-point line
+  // (the cut) selected together, in either click order.
+  const splitTarget =
+    twoSelected.length === 2
+      ? twoSelected[0].closed && !twoSelected[1].closed && twoSelected[1].vertices.length === 2
+        ? { closedPieceId: twoSelected[0].id, linePieceId: twoSelected[1].id }
+        : twoSelected[1].closed && !twoSelected[0].closed && twoSelected[0].vertices.length === 2
+          ? { closedPieceId: twoSelected[1].id, linePieceId: twoSelected[0].id }
+          : null
+      : null
+
+  function handleSplit() {
+    if (!splitTarget) return
+    const closedPiece = document.pieces.find((p) => p.id === splitTarget.closedPieceId)
+    const linePiece = document.pieces.find((p) => p.id === splitTarget.linePieceId)
+    const polygon = flattenToPolygon(closedPiece.vertices, true)
+    const loops = splitClosedPolygonByLine(polygon, linePiece.vertices[0].point, linePiece.vertices[1].point)
+    if (!loops) {
+      alert(
+        '선이 면을 정확히 두 번 가로지르지 않아 나눌 수 없습니다.\n선의 양 끝이 면 밖에 있고, 면 경계를 한 번만 관통하도록 그려주세요.'
+      )
+      return
+    }
+    dispatch({ type: 'SPLIT_PIECE', ...splitTarget })
+  }
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0', flexWrap: 'wrap' }}>
@@ -95,12 +128,19 @@ function Toolbar({ state, dispatch, actualSize, onToggleActualSize, calibrated, 
 
       <ToolButton
         icon="🔗"
-        label="선 합치기"
+        label="합치기"
         disabled={!canMerge}
         onClick={() =>
           dispatch({ type: 'MERGE_PIECES', pieceIdA: selectedPieceIds[0], pieceIdB: selectedPieceIds[1] })
         }
-        title="열린 선 2개를 가까운 끝점끼리 하나로 합칩니다"
+        title="열린 선 2개는 끝점끼리 이어서, 닫힌 도형 2개는 겹치는 영역을 합쳐서 하나로 만듭니다"
+      />
+      <ToolButton
+        icon="✂️"
+        label="나누기"
+        disabled={!splitTarget}
+        onClick={handleSplit}
+        title="닫힌 도형 1개 + 그 도형을 가로지르는 열린 선 1개를 선택하면, 선을 기준으로 도형을 둘로 나눕니다"
       />
 
       <Divider />

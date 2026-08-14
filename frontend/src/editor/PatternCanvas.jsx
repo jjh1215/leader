@@ -1,11 +1,11 @@
 import { useRef, useState } from 'react'
 import { flattenToPolygon, verticesToPathD } from './geometry/fillet.js'
 import { distanceToPolyline } from './geometry/hitTest.js'
+import { projectPointToPolyline } from './geometry/edgeDock.js'
 import { offsetPolygon } from './geometry/offset.js'
 import { pointsToPathD } from './geometry/path.js'
 import { pxToMm, screenToDocPoint } from './geometry/screenToDoc.js'
 import { snapOrthogonal } from './geometry/snap.js'
-import { snapToNearbyVertex as snapToNearbyVertexPure } from './geometry/dockSnap.js'
 import { placeStitchHoles } from './geometry/stitch.js'
 
 const HIT_RADIUS_PX = 8
@@ -60,6 +60,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
   const [panStart, setPanStart] = useState(null)
   const [shapeDrag, setShapeDrag] = useState(null) // transient rect/line preview: { start, end }
   const [hoverPoint, setHoverPoint] = useState(null) // rubber-band preview for the draw-line pen tool
+  const [hoverDock, setHoverDock] = useState(null) // dock the hoverPoint is currently snapped to, if any
   const [marquee, setMarquee] = useState(null) // transient drag-select box: { start, end, additive }
 
   const { document, toolMode, activePieceId, selection, selectedPieceIds } = state
@@ -88,13 +89,52 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     return best
   }
 
-  // "Docking": when a point being placed while drawing lands near an existing
-  // vertex (on any piece, including other pieces), snap exactly onto it
-  // instead of leaving a near-miss gap. This is what lets two separately
-  // drawn lines end up sharing an exact coordinate, so they read as joined
-  // and MERGE_PIECES/rendering never shows a hairline gap at the seam.
-  function snapToNearbyVertex(point) {
-    return snapToNearbyVertexPure(point, document.pieces, hitRadiusMm())
+  // "Docking": snaps a point being placed or dragged onto nearby geometry,
+  // and reports *what* it snapped to as a `dock` reference so the reducer
+  // can turn it into a live constraint (see patternReducer.js resolveDocks).
+  // Vertex-to-vertex takes priority over point-to-edge (a vertex is a more
+  // precise target than a projection onto its edge). `excludePieceId` /
+  // `excludeVertexId` keep an existing vertex from docking to itself while
+  // it's being dragged.
+  function computeSnap(point, { excludePieceId, excludeVertexId } = {}) {
+    const threshold = hitRadiusMm()
+
+    let bestVertex = null
+    let bestVertexDist = threshold
+    for (const piece of document.pieces) {
+      for (const v of piece.vertices) {
+        if (v.id === excludeVertexId) continue
+        const d = Math.hypot(v.point.x - point.x, v.point.y - point.y)
+        if (d < bestVertexDist) {
+          bestVertexDist = d
+          bestVertex = { pieceId: piece.id, vertexId: v.id, point: v.point }
+        }
+      }
+    }
+    if (bestVertex) {
+      return {
+        point: bestVertex.point,
+        dock: { kind: 'vertex', targetPieceId: bestVertex.pieceId, targetVertexId: bestVertex.vertexId },
+      }
+    }
+
+    let bestEdge = null
+    for (const piece of document.pieces) {
+      if (piece.id === excludePieceId || piece.vertices.length < 2) continue
+      const poly = flattenToPolygon(piece.vertices, piece.closed)
+      const proj = projectPointToPolyline(point, poly, piece.closed)
+      if (proj && proj.distance < threshold && (!bestEdge || proj.distance < bestEdge.distance)) {
+        bestEdge = { ...proj, pieceId: piece.id }
+      }
+    }
+    if (bestEdge) {
+      return {
+        point: bestEdge.point,
+        dock: { kind: 'edge', targetPieceId: bestEdge.pieceId, edgeIndex: bestEdge.edgeIndex, t: bestEdge.t },
+      }
+    }
+
+    return { point, dock: null }
   }
 
   function findNearestPiece(point) {
@@ -138,16 +178,18 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         if (d < hitRadiusMm()) {
           dispatch({ type: 'CLOSE_ACTIVE_PIECE' })
           setHoverPoint(null)
+          setHoverDock(null)
           return
         }
       }
-      dispatch({ type: 'ADD_VERTEX', pieceId: activePieceId, point: snapToNearbyVertex(point) })
+      const snap = computeSnap(point)
+      dispatch({ type: 'ADD_VERTEX', pieceId: activePieceId, point: snap.point, dock: snap.dock })
       return
     }
 
     if (toolMode === 'rect' || toolMode === 'line') {
-      const start = snapToNearbyVertex(point)
-      setShapeDrag({ start, end: start })
+      const snap = computeSnap(point)
+      setShapeDrag({ start: snap.point, end: snap.point, startDock: snap.dock, endDock: snap.dock })
       return
     }
 
@@ -157,7 +199,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         dispatch({ type: 'SELECT_VERTEX', pieceId: hit.pieceId, vertexId: hit.vertexId })
         const piece = document.pieces.find((p) => p.id === hit.pieceId)
         const v = piece.vertices.find((vv) => vv.id === hit.vertexId)
-        setDragVertex({ ...hit, point: v.point })
+        setDragVertex({ ...hit, point: v.point, dock: v.dock ?? null })
         return
       }
       const pieceId = findNearestPiece(point)
@@ -178,11 +220,15 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
 
   function handlePointerMove(e) {
     if (dragVertex) {
-      setDragVertex({ ...dragVertex, point: toDoc(e) })
+      // Re-evaluate docking on every move (not just at drag-start): sliding
+      // near an edge docks it live, dragging far enough away frees it again.
+      const snap = computeSnap(toDoc(e), { excludePieceId: dragVertex.pieceId })
+      setDragVertex({ ...dragVertex, point: snap.point, dock: snap.dock })
     } else if (shapeDrag) {
       const raw = toDoc(e)
       const constrained = e.shiftKey ? snapOrthogonal(shapeDrag.start, raw) : raw
-      setShapeDrag({ ...shapeDrag, end: snapToNearbyVertex(constrained) })
+      const snap = computeSnap(constrained)
+      setShapeDrag({ ...shapeDrag, end: snap.point, endDock: snap.dock })
     } else if (marquee) {
       setMarquee({ ...marquee, end: toDoc(e) })
     } else if (panStart) {
@@ -196,7 +242,9 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       if (lastVertex) {
         const raw = toDoc(e)
         const constrained = e.shiftKey ? snapOrthogonal(lastVertex.point, raw) : raw
-        setHoverPoint(snapToNearbyVertex(constrained))
+        const snap = computeSnap(constrained)
+        setHoverPoint(snap.point)
+        setHoverDock(snap.dock)
       }
     }
   }
@@ -208,6 +256,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         pieceId: dragVertex.pieceId,
         vertexId: dragVertex.vertexId,
         point: dragVertex.point,
+        dock: dragVertex.dock,
       })
       setDragVertex(null)
     }
@@ -217,7 +266,13 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         if (toolMode === 'rect') {
           dispatch({ type: 'ADD_RECT_PIECE', corner1: shapeDrag.start, corner2: shapeDrag.end })
         } else if (toolMode === 'line') {
-          dispatch({ type: 'ADD_LINE_PIECE', start: shapeDrag.start, end: shapeDrag.end })
+          dispatch({
+            type: 'ADD_LINE_PIECE',
+            start: shapeDrag.start,
+            end: shapeDrag.end,
+            startDock: shapeDrag.startDock,
+            endDock: shapeDrag.endDock,
+          })
         }
       }
       setShapeDrag(null)
@@ -261,6 +316,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     if (toolMode === 'draw-line') {
       dispatch({ type: 'END_OPEN_PATH' })
       setHoverPoint(null)
+      setHoverDock(null)
     }
   }
 
@@ -274,29 +330,24 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     } else if (e.key === 'Escape' && toolMode === 'draw-line') {
       dispatch({ type: 'END_OPEN_PATH' })
       setHoverPoint(null)
+      setHoverDock(null)
     }
   }
 
   const vertexRadiusMm = viewBox.width / 130
 
-  // For the "docking" visual cue: is this point currently snapped exactly
-  // onto an existing vertex? (snapToNearbyVertex makes it exactly equal when so.)
-  function dockedAt(point) {
-    if (!point) return null
-    for (const piece of document.pieces) {
-      for (const v of piece.vertices) {
-        if (v.point.x === point.x && v.point.y === point.y) return v.point
-      }
-    }
-    return null
-  }
-
+  // The "docking" visual cue: whichever point is currently live-snapped
+  // (tracked explicitly via computeSnap's returned dock, not re-derived by
+  // guessing from position -- an edge dock's point isn't necessarily equal
+  // to any stored vertex, so an equality check alone can't detect it).
   const dockPoint =
-    toolMode === 'draw-line'
-      ? dockedAt(hoverPoint)
-      : toolMode === 'rect' || toolMode === 'line'
-        ? dockedAt(shapeDrag?.end)
-        : null
+    toolMode === 'draw-line' && hoverDock
+      ? hoverPoint
+      : toolMode === 'line' && shapeDrag?.endDock
+        ? shapeDrag.end
+        : toolMode === 'select' && dragVertex?.dock
+          ? dragVertex.point
+          : null
 
   // In "actual size" mode the SVG is given an explicit CSS pixel size derived
   // from the calibrated pxPerMm, instead of stretching to fill its container --

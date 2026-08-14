@@ -3,8 +3,13 @@
 // in-progress drag previews live in local component state instead.
 import { useReducer } from 'react'
 import { generateId } from './geometry/id.js'
+import { flattenToPolygon } from './geometry/fillet.js'
+import { resolveDockPoint } from './geometry/edgeDock.js'
+import { splitClosedPolygonByLine } from './geometry/splitPolygon.js'
+import { unionPolygons } from './geometry/polygonUnion.js'
 
 const HISTORY_LIMIT = 100
+const DOCK_RESOLVE_PASSES = 5 // lets short dock chains (A on B, B on C) settle
 
 export const emptyDocument = () => ({
   pieces: [],
@@ -29,9 +34,39 @@ function initState(document) {
   }
 }
 
+// Recomputes every docked vertex's live position from its target. Runs as
+// the last step of every commit so no individual action needs its own
+// "also update anything docked to what I just changed" logic -- editing a
+// rectangle's dimensions, moving a vertex, anything at all, and dock
+// resolution happens uniformly afterward from the resulting document alone.
+function resolveDocks(document) {
+  let pieces = document.pieces
+  for (let pass = 0; pass < DOCK_RESOLVE_PASSES; pass++) {
+    let changed = false
+    const snapshot = pieces
+    pieces = pieces.map((piece) => ({
+      ...piece,
+      vertices: piece.vertices.map((v) => {
+        if (!v.dock) return v
+        const resolved = resolveDockPoint(v.dock, snapshot)
+        if (!resolved) {
+          changed = true
+          return { ...v, dock: null } // target gone/invalid: constraint breaks, keep last point
+        }
+        if (resolved.x === v.point.x && resolved.y === v.point.y) return v
+        changed = true
+        return { ...v, point: resolved }
+      }),
+    }))
+    if (!changed) break
+  }
+  return pieces === document.pieces ? document : { ...document, pieces }
+}
+
 function commit(state, nextDocument) {
+  const resolved = resolveDocks(nextDocument)
   const past = [...state.past, cloneDoc(state.document)].slice(-HISTORY_LIMIT)
-  return { ...state, document: nextDocument, past, future: [] }
+  return { ...state, document: resolved, past, future: [] }
 }
 
 export function patternReducer(state, action) {
@@ -63,7 +98,13 @@ export function patternReducer(state, action) {
     case 'ADD_VERTEX': {
       const nextPieces = state.document.pieces.map((p) =>
         p.id === action.pieceId
-          ? { ...p, vertices: [...p.vertices, { id: generateId(), point: action.point, cornerRadius: 0 }] }
+          ? {
+              ...p,
+              vertices: [
+                ...p.vertices,
+                { id: generateId(), point: action.point, cornerRadius: 0, dock: action.dock ?? null },
+              ],
+            }
           : p
       )
       return commit(state, { ...state.document, pieces: nextPieces })
@@ -97,14 +138,14 @@ export function patternReducer(state, action) {
     }
 
     case 'ADD_LINE_PIECE': {
-      const { start, end } = action
+      const { start, end, startDock, endDock } = action
       const piece = {
         id: generateId(),
         name: `조각 ${state.document.pieces.length + 1}`,
         closed: false,
         vertices: [
-          { id: generateId(), point: start, cornerRadius: 0 },
-          { id: generateId(), point: end, cornerRadius: 0 },
+          { id: generateId(), point: start, cornerRadius: 0, dock: startDock ?? null },
+          { id: generateId(), point: end, cornerRadius: 0, dock: endDock ?? null },
         ],
       }
       const nextDoc = { ...state.document, pieces: [...state.document.pieces, piece] }
@@ -163,11 +204,48 @@ export function patternReducer(state, action) {
     case 'CLEAR_PIECE_SELECTION':
       return { ...state, selectedPieceIds: [] }
 
+    // Two closed shapes merge via polygon union (clipper-lib, same engine as
+    // offset.js) -- this is the deliberate mirror of SPLIT_PIECE below: no
+    // separate "undo my split" bookkeeping is needed because any two closed
+    // pieces that touch/overlap can always be re-merged this way.
     case 'MERGE_PIECES': {
       const { pieceIdA, pieceIdB } = action
       const a = state.document.pieces.find((p) => p.id === pieceIdA)
       const b = state.document.pieces.find((p) => p.id === pieceIdB)
-      if (!a || !b || a.closed || b.closed || a.vertices.length < 2 || b.vertices.length < 2) {
+      if (!a || !b) return state
+
+      if (a.closed && b.closed) {
+        const polyA = flattenToPolygon(a.vertices, true)
+        const polyB = flattenToPolygon(b.vertices, true)
+        const unioned = unionPolygons(polyA, polyB)
+        const newPieces = unioned.map((loop, i) => ({
+          id: generateId(),
+          name: unioned.length > 1 ? `${a.name} ${i + 1}` : a.name,
+          closed: true,
+          vertices: loop.map((p) => ({ id: generateId(), point: p, cornerRadius: 0, dock: null })),
+        }))
+        const nextDoc = {
+          ...state.document,
+          pieces: [
+            ...state.document.pieces.filter((p) => p.id !== pieceIdA && p.id !== pieceIdB),
+            ...newPieces,
+          ],
+          stitchLines: state.document.stitchLines.filter(
+            (s) => s.sourcePieceId !== pieceIdA && s.sourcePieceId !== pieceIdB
+          ),
+          offsetPaths: state.document.offsetPaths.filter(
+            (o) => o.sourcePieceId !== pieceIdA && o.sourcePieceId !== pieceIdB
+          ),
+        }
+        return {
+          ...commit(state, nextDoc),
+          selectedPieceIds: newPieces.map((p) => p.id),
+          activePieceId: null,
+          selection: null,
+        }
+      }
+
+      if (a.closed || b.closed || a.vertices.length < 2 || b.vertices.length < 2) {
         return state
       }
 
@@ -220,11 +298,75 @@ export function patternReducer(state, action) {
       }
     }
 
+    // Cuts a closed piece into two closed pieces along an open 2-point line
+    // piece, replacing both inputs. Only handles the line crossing the
+    // boundary exactly twice (see splitPolygon.js) -- anything else is a
+    // no-op, left for the UI to report as "can't split that."
+    case 'SPLIT_PIECE': {
+      const { closedPieceId, linePieceId } = action
+      const closedPiece = state.document.pieces.find((p) => p.id === closedPieceId)
+      const linePiece = state.document.pieces.find((p) => p.id === linePieceId)
+      if (
+        !closedPiece ||
+        !linePiece ||
+        !closedPiece.closed ||
+        linePiece.closed ||
+        linePiece.vertices.length !== 2
+      ) {
+        return state
+      }
+
+      const polygon = flattenToPolygon(closedPiece.vertices, true)
+      const loops = splitClosedPolygonByLine(polygon, linePiece.vertices[0].point, linePiece.vertices[1].point)
+      if (!loops) return state
+
+      const toPiece = (points, suffix) => ({
+        id: generateId(),
+        name: `${closedPiece.name} ${suffix}`,
+        closed: true,
+        vertices: points.map((p) => ({ id: generateId(), point: p, cornerRadius: 0, dock: null })),
+      })
+      const pieceA = toPiece(loops[0], 'A')
+      const pieceB = toPiece(loops[1], 'B')
+
+      const nextDoc = {
+        ...state.document,
+        pieces: [
+          ...state.document.pieces.filter((p) => p.id !== closedPieceId && p.id !== linePieceId),
+          pieceA,
+          pieceB,
+        ],
+        stitchLines: state.document.stitchLines.filter(
+          (s) => s.sourcePieceId !== closedPieceId && s.sourcePieceId !== linePieceId
+        ),
+        offsetPaths: state.document.offsetPaths.filter(
+          (o) => o.sourcePieceId !== closedPieceId && o.sourcePieceId !== linePieceId
+        ),
+      }
+
+      return {
+        ...commit(state, nextDoc),
+        selectedPieceIds: [pieceA.id, pieceB.id],
+        activePieceId: null,
+        selection: null,
+      }
+    }
+
+    // Always sets `dock` to whatever the action specifies (defaulting to
+    // null/free) rather than preserving whatever the vertex had before --
+    // otherwise a plain move on a previously-docked vertex would appear to
+    // silently snap back next render, since resolveDocks runs on every
+    // commit and would immediately recompute the old dock's position.
     case 'MOVE_VERTEX': {
       const nextPieces = state.document.pieces.map((p) =>
         p.id !== action.pieceId
           ? p
-          : { ...p, vertices: p.vertices.map((v) => (v.id === action.vertexId ? { ...v, point: action.point } : v)) }
+          : {
+              ...p,
+              vertices: p.vertices.map((v) =>
+                v.id === action.vertexId ? { ...v, point: action.point, dock: action.dock ?? null } : v
+              ),
+            }
       )
       return commit(state, { ...state.document, pieces: nextPieces })
     }
@@ -238,7 +380,8 @@ export function patternReducer(state, action) {
         if (p.id !== pieceId || p.vertices.length !== 2) return p
         const start = p.vertices[0].point
         const end = { x: start.x + length * Math.cos(rad), y: start.y + length * Math.sin(rad) }
-        return { ...p, vertices: [p.vertices[0], { ...p.vertices[1], point: end }] }
+        // An explicit numeric edit overrides any prior dock on the point it moves.
+        return { ...p, vertices: [p.vertices[0], { ...p.vertices[1], point: end, dock: null }] }
       })
       return commit(state, { ...state.document, pieces: nextPieces })
     }
@@ -265,6 +408,7 @@ export function patternReducer(state, action) {
               x: v.point.x === oldMinX ? minX : minX + width,
               y: v.point.y === oldMinY ? minY : minY + height,
             },
+            dock: null, // explicit numeric edit overrides any prior dock
           })),
         }
       })
