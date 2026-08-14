@@ -29,7 +29,7 @@ function hintFor(state) {
     case 'line':
       return '드래그해서 직선 그리기 (Shift=직각 스냅) · 다른 점/변 근처에 놓으면 도킹됨 · 우측 하단에서 치수로도 그릴 수 있음'
     case 'internal-point':
-      return '점을 추가할 내부선을 클릭하세요 · 그 자리에서 내부선이 둘로 나뉘어 각각 따로 선택할 수 있게 됩니다 · Esc로 취소'
+      return '점을 추가할 내부선이나 직선을 클릭하세요 · 그 자리에서 선이 둘로 나뉘어 각각 따로 선택할 수 있게 됩니다 · Esc로 취소'
     case 'select':
       if (internalLineSelection) {
         return '이 점을 드래그해서 이동 · 우측 하단에서 좌표로도 이동 가능 · Delete로 이 선 삭제'

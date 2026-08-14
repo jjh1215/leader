@@ -12,6 +12,10 @@ const HIT_RADIUS_PX = 8
 const MIN_SHAPE_DRAG_MM = 0.5 // ignore accidental clicks-without-drag for rect/line tools
 const DEFAULT_VIEWBOX = { x: -20, y: -20, width: 240, height: 240 }
 
+// Internal line stroke patterns -- `undefined` (no dasharray) renders solid,
+// like a regular piece outline.
+const INTERNAL_LINE_DASH = { solid: undefined, dashed: '5 3', dotted: '1.2 2', dashdot: '5 2 1.2 2' }
+
 // Local tangent direction (degrees) of the stitch path at hole `index`,
 // via a central difference against its neighbors -- used to orient the
 // "diagonal" stitch-style marker relative to the seam itself rather than a
@@ -248,6 +252,25 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     return best
   }
 
+  // The "점 추가" tool's other target: a plain open piece (직선/자유그리기),
+  // hit-tested against its raw vertex chain -- same idea as
+  // findNearestInternalLine, but for a piece.vertices boundary instead.
+  function findNearestOpenLinePiece(point) {
+    const threshold = hitRadiusMm()
+    let best = null
+    let bestDist = threshold
+    for (const piece of document.pieces) {
+      if (piece.closed || piece.vertices.length < 2) continue
+      const raw = piece.vertices.map((v) => v.point)
+      const d = distanceToPolyline(point, raw, false)
+      if (d < bestDist) {
+        bestDist = d
+        best = piece.id
+      }
+    }
+    return best
+  }
+
   // Marquee/drag-select: any piece with at least one vertex inside the box
   // (the common "touch" rubber-band behavior, not strict full-enclosure).
   function piecesTouchingRect(minX, minY, maxX, maxY) {
@@ -289,9 +312,10 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     }
 
     // "점 추가" tool, armed via its own toolbar button: clicking any internal
-    // line splits it in two at the clicked point (see SPLIT_INTERNAL_LINE).
-    // Requiring the button avoids overloading a plain click on an
-    // already-selected line, which just re-selects it instead.
+    // line or plain open line piece splits it in two at the clicked point
+    // (see SPLIT_INTERNAL_LINE / SPLIT_LINE_PIECE). Requiring the button
+    // avoids overloading a plain click on an already-selected line, which
+    // just re-selects it instead.
     if (toolMode === 'internal-point') {
       const internalLineHit = findNearestInternalLine(point)
       if (internalLineHit) {
@@ -300,6 +324,17 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         const proj = full && projectPointToPolyline(point, full, false)
         if (proj) {
           dispatch({ type: 'SPLIT_INTERNAL_LINE', internalLineId: internalLineHit, point: proj.point })
+        }
+        return
+      }
+
+      const linePieceHit = findNearestOpenLinePiece(point)
+      if (linePieceHit) {
+        const piece = document.pieces.find((p) => p.id === linePieceHit)
+        const raw = piece.vertices.map((v) => v.point)
+        const proj = projectPointToPolyline(point, raw, false)
+        if (proj) {
+          dispatch({ type: 'SPLIT_LINE_PIECE', pieceId: linePieceHit, point: proj.point, insertIndex: proj.edgeIndex })
         }
       }
       return
@@ -698,7 +733,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
               d={pointsToPathD(liveFull, false)}
               fill="none"
               stroke={isSelected ? '#1e6fe0' : '#7a4a1e'}
-              strokeDasharray="5 3"
+              strokeDasharray={INTERNAL_LINE_DASH[line.strokeStyle ?? 'dashed']}
               strokeWidth={isSelected ? 2 : 1.2}
               vectorEffect="non-scaling-stroke"
             />
@@ -770,15 +805,16 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
                     transform={`rotate(45 ${h.x} ${h.y})`}
                     fill="#b03060"
                   />
-                ) : def.style === 'slash' ? (
+                ) : def.style === 'slash' || def.style === 'backslash' ? (
                   (() => {
                     // A genuine slanted mark (unlike the diamond above, this
                     // one isn't rotationally symmetric) -- leaning 45° off
                     // the seam's own local direction, not a fixed screen
                     // angle, so it stays a consistent "diagonal relative to
                     // the stitching" on edges at any angle, not just
-                    // horizontal ones.
-                    const angleRad = ((holeTangentAngleDeg(holes, hi, holesClosed) + 45) * Math.PI) / 180
+                    // horizontal ones. "backslash" leans the opposite way.
+                    const lean = def.style === 'backslash' ? -45 : 45
+                    const angleRad = ((holeTangentAngleDeg(holes, hi, holesClosed) + lean) * Math.PI) / 180
                     const dx = Math.cos(angleRad) * holeRadius * 1.4
                     const dy = Math.sin(angleRad) * holeRadius * 1.4
                     return (

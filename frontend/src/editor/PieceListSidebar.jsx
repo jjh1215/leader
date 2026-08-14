@@ -115,6 +115,41 @@ function StitchLineControls({ piece, document, dispatch }) {
   )
 }
 
+const LINE_STYLE_OPTIONS = [
+  { value: 'solid', label: '실선' },
+  { value: 'dashed', label: '파선' },
+  { value: 'dotted', label: '점선' },
+  { value: 'dashdot', label: '1점 쇄선' },
+]
+
+// Wraps a per-line style picker (always shown -- picking a line style has
+// nothing to do with whether stitch presets exist yet) around the stitch
+// controls (only shown once a preset exists, same as the piece-level ones).
+function InternalLineControls({ internalLine, document, dispatch }) {
+  return (
+    <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+      <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+        <span style={{ fontSize: '0.7rem', color: '#7a4a1e' }}>{internalLine.name}</span>
+        <select
+          value={internalLine.strokeStyle ?? 'dashed'}
+          onChange={(e) =>
+            dispatch({ type: 'SET_INTERNAL_LINE_STYLE', internalLineId: internalLine.id, strokeStyle: e.target.value })
+          }
+          style={{ fontSize: '0.7rem' }}
+          title="내부선 표시 스타일 (일반 선처럼 실선으로도 표시 가능)"
+        >
+          {LINE_STYLE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <InternalLineStitchControls internalLine={internalLine} document={document} dispatch={dispatch} />
+    </div>
+  )
+}
+
 function InternalLineStitchControls({ internalLine, document, dispatch }) {
   const [inset, setInset] = useState(2)
   const [sideOffset, setSideOffset] = useState(0)
@@ -131,9 +166,8 @@ function InternalLineStitchControls({ internalLine, document, dispatch }) {
     : document.stitchPatternDefs[0].id
 
   return (
-    <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+    <div style={{ marginTop: '0.25rem' }}>
       <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.7rem', color: '#7a4a1e' }}>{internalLine.name}</span>
         <input
           type="number"
           step="0.5"
@@ -215,7 +249,7 @@ function PieceListSidebar({ state, dispatch }) {
             {document.internalLines
               .filter((l) => l.sourcePieceId === piece.id)
               .map((internalLine) => (
-                <InternalLineStitchControls
+                <InternalLineControls
                   key={internalLine.id}
                   internalLine={internalLine}
                   document={document}

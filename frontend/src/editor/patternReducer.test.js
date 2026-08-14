@@ -594,6 +594,28 @@ describe('patternReducer', () => {
       expect(state.selection).toBeNull()
     })
 
+    it('ADD_INTERNAL_LINE defaults strokeStyle to dashed', () => {
+      const { state: setup } = setupInternalLine()
+      expect(setup.document.internalLines[0].strokeStyle).toBe('dashed')
+    })
+
+    it('SET_INTERNAL_LINE_STYLE changes only the targeted line\'s strokeStyle', () => {
+      const { state: setup, internalLineId } = setupInternalLine()
+      const state = patternReducer(setup, {
+        type: 'SET_INTERNAL_LINE_STYLE',
+        internalLineId,
+        strokeStyle: 'solid',
+      })
+      expect(state.document.internalLines[0].strokeStyle).toBe('solid')
+    })
+
+    it('SPLIT_INTERNAL_LINE preserves the source line\'s strokeStyle on both halves', () => {
+      const { state: setup, internalLineId } = setupInternalLine()
+      const solid = patternReducer(setup, { type: 'SET_INTERNAL_LINE_STYLE', internalLineId, strokeStyle: 'solid' })
+      const state = patternReducer(solid, { type: 'SPLIT_INTERNAL_LINE', internalLineId, point: { x: 5, y: 5 } })
+      expect(state.document.internalLines.map((l) => l.strokeStyle)).toEqual(['solid', 'solid'])
+    })
+
     it('SPLIT_INTERNAL_LINE replaces the line with two independent lines meeting at the split point', () => {
       const { state: setup, internalLineId } = setupInternalLine()
       const originalLine = setup.document.internalLines[0]
@@ -676,6 +698,86 @@ describe('patternReducer', () => {
     })
   })
 
+  describe('SPLIT_LINE_PIECE', () => {
+    function setupLinePiece() {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: 0, y: 0 }, end: { x: 10, y: 0 } })
+      const pieceId = state.document.pieces[0].id
+      return { state, pieceId }
+    }
+
+    it('replaces the piece with two independent open pieces meeting at the split point', () => {
+      const { state: setup, pieceId } = setupLinePiece()
+      const state = patternReducer(setup, {
+        type: 'SPLIT_LINE_PIECE',
+        pieceId,
+        point: { x: 5, y: 0 },
+        insertIndex: 0,
+      })
+
+      expect(state.document.pieces).toHaveLength(2)
+      expect(state.document.pieces.find((p) => p.id === pieceId)).toBeUndefined()
+      const [pieceA, pieceB] = state.document.pieces
+      expect(pieceA.closed).toBe(false)
+      expect(pieceB.closed).toBe(false)
+      expect(pieceA.vertices.map((v) => v.point)).toEqual([{ x: 0, y: 0 }, { x: 5, y: 0 }])
+      expect(pieceB.vertices.map((v) => v.point)).toEqual([{ x: 5, y: 0 }, { x: 10, y: 0 }])
+      // Independent vertices at the split point, not a shared id.
+      expect(pieceA.vertices[1].id).not.toBe(pieceB.vertices[0].id)
+    })
+
+    it('selects the front (A) half, clears prior selection, and returns to select mode', () => {
+      const { state: setup, pieceId } = setupLinePiece()
+      const armed = { ...setup, toolMode: 'internal-point' }
+      const state = patternReducer(armed, {
+        type: 'SPLIT_LINE_PIECE',
+        pieceId,
+        point: { x: 5, y: 0 },
+        insertIndex: 0,
+      })
+      const [pieceA] = state.document.pieces
+      expect(state.toolMode).toBe('select')
+      expect(state.selectedPieceIds).toEqual([pieceA.id])
+      expect(state.selection).toBeNull()
+    })
+
+    it('drops dependent stitch lines and offset paths tied to the original piece', () => {
+      const { state: setup, pieceId } = setupLinePiece()
+      let state = patternReducer(setup, {
+        type: 'ADD_STITCH_LINE',
+        stitchLine: { id: 's1', name: 's', sourcePieceId: pieceId, insetDistance: 1, stitchPatternDefId: 'd1' },
+      })
+      state = patternReducer(state, {
+        type: 'ADD_OFFSET_PATH',
+        offsetPath: { id: 'o1', name: 'o', sourcePieceId: pieceId, offsetDistance: 3 },
+      })
+      state = patternReducer(state, { type: 'SPLIT_LINE_PIECE', pieceId, point: { x: 5, y: 0 }, insertIndex: 0 })
+      expect(state.document.stitchLines).toHaveLength(0)
+      expect(state.document.offsetPaths).toHaveLength(0)
+    })
+
+    it('is a no-op for a closed piece', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const pieceId = state.document.pieces[0].id
+      const before = state
+      state = patternReducer(state, { type: 'SPLIT_LINE_PIECE', pieceId, point: { x: 5, y: 0 }, insertIndex: 0 })
+      expect(state).toBe(before)
+    })
+
+    it('is a no-op for an out-of-range insertIndex', () => {
+      const { state: setup, pieceId } = setupLinePiece()
+      const before = setup
+      const state = patternReducer(setup, {
+        type: 'SPLIT_LINE_PIECE',
+        pieceId,
+        point: { x: 5, y: 0 },
+        insertIndex: 5,
+      })
+      expect(state).toBe(before)
+    })
+  })
+
   describe('TRANSLATE_PIECES', () => {
     it('shifts every vertex of the listed pieces by (dx, dy), leaving others untouched', () => {
       let state = initState()
@@ -753,6 +855,7 @@ describe('patternReducer', () => {
           sourcePieceId: 'p1',
           endpointA: { kind: 'vertex', vertexId: 'v1' },
           endpointB: { kind: 'vertex', vertexId: 'v2' },
+          strokeStyle: 'dashed',
         },
       ])
     })

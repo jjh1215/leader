@@ -192,11 +192,11 @@ function Toolbar({
       />
       <ToolButton
         icon="➕"
-        label="내부선 점 추가"
+        label="점 추가"
         active={toolMode === 'internal-point'}
-        disabled={document.internalLines.length === 0}
+        disabled={document.internalLines.length === 0 && !document.pieces.some((p) => !p.closed && p.vertices.length >= 2)}
         onClick={() => dispatch({ type: 'SET_TOOL_MODE', mode: 'internal-point' })}
-        title="이 버튼을 누른 뒤 내부선을 클릭하면, 그 자리에서 내부선이 둘로 나뉘어 각각 따로 선택할 수 있게 됩니다"
+        title="이 버튼을 누른 뒤 내부선이나 직선을 클릭하면, 그 자리에서 선이 둘로 나뉘어 각각 따로 선택할 수 있게 됩니다"
       />
 
       <Divider />

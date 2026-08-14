@@ -31,7 +31,7 @@ function cloneDoc(doc) {
 // becomes its own line boundary instead, so a line with N old bend points
 // expands into N+1 new lines here (always returns an array for that reason).
 function normalizeInternalLine(line) {
-  if (line.endpointA && line.endpointB) return [line]
+  if (line.endpointA && line.endpointB) return [{ strokeStyle: 'dashed', ...line }]
   const chain = [
     { kind: 'vertex', vertexId: line.vertexIdA },
     ...(line.points ?? []).map((p) => ({ kind: 'free', id: p.id, point: p.point })),
@@ -45,6 +45,7 @@ function normalizeInternalLine(line) {
       sourcePieceId: line.sourcePieceId,
       endpointA: chain[i],
       endpointB: chain[i + 1],
+      strokeStyle: 'dashed',
     })
   }
   return segments
@@ -296,6 +297,16 @@ export function patternReducer(state, action) {
         selectedPieceIds: [],
       }
 
+    // Changes how a line renders (solid/dashed/dotted/dashdot) -- purely
+    // cosmetic, no geometry involved.
+    case 'SET_INTERNAL_LINE_STYLE': {
+      const { internalLineId, strokeStyle } = action
+      const nextInternalLines = state.document.internalLines.map((l) =>
+        l.id === internalLineId ? { ...l, strokeStyle } : l
+      )
+      return commit(state, { ...state.document, internalLines: nextInternalLines })
+    }
+
     // The "mark, don't cut" counterpart to SPLIT_PIECE: same selection (a
     // closed piece + a crossing open 2-point line) and the same underlying
     // line-vs-boundary math, but instead of dividing the piece into two, it
@@ -349,6 +360,7 @@ export function patternReducer(state, action) {
         sourcePieceId: closedPieceId,
         endpointA: { kind: 'vertex', vertexId: newVertexIds[0] },
         endpointB: { kind: 'vertex', vertexId: newVertexIds[1] },
+        strokeStyle: 'dashed',
       }
 
       const nextDoc = {
@@ -390,6 +402,7 @@ export function patternReducer(state, action) {
         sourcePieceId: line.sourcePieceId,
         endpointA: line.endpointA,
         endpointB: { kind: 'free', id: generateId(), point },
+        strokeStyle: line.strokeStyle,
       }
       const lineB = {
         id: generateId(),
@@ -397,6 +410,7 @@ export function patternReducer(state, action) {
         sourcePieceId: line.sourcePieceId,
         endpointA: { kind: 'free', id: generateId(), point },
         endpointB: line.endpointB,
+        strokeStyle: line.strokeStyle,
       }
 
       const nextDoc = {
@@ -612,6 +626,57 @@ export function patternReducer(state, action) {
         selectedPieceIds: [pieceA.id, pieceB.id],
         activePieceId: null,
         selection: null,
+      }
+    }
+
+    // The "점 추가" tool's other target besides internal lines: splits a
+    // plain open line piece (drawn via the 직선/자유그리기 tools, at least 2
+    // vertices, not closed) into two independent open pieces at `point`.
+    // Mirrors SPLIT_INTERNAL_LINE's approach -- each half gets its own new
+    // vertex at the split location rather than sharing one, so dragging one
+    // half's end doesn't move the other's. `insertIndex` is the raw
+    // (unflattened) segment index the canvas found via projectPointToPolyline,
+    // i.e. the split falls between piece.vertices[insertIndex] and
+    // piece.vertices[insertIndex + 1].
+    case 'SPLIT_LINE_PIECE': {
+      const { pieceId, point, insertIndex } = action
+      const piece = state.document.pieces.find((p) => p.id === pieceId)
+      if (!piece || piece.closed || piece.vertices.length < 2) return state
+      if (insertIndex < 0 || insertIndex >= piece.vertices.length - 1) return state
+
+      const pieceA = {
+        id: generateId(),
+        name: `${piece.name} A`,
+        closed: false,
+        vertices: [
+          ...piece.vertices.slice(0, insertIndex + 1),
+          { id: generateId(), point, cornerRadius: 0, dock: null },
+        ],
+      }
+      const pieceB = {
+        id: generateId(),
+        name: `${piece.name} B`,
+        closed: false,
+        vertices: [
+          { id: generateId(), point, cornerRadius: 0, dock: null },
+          ...piece.vertices.slice(insertIndex + 1),
+        ],
+      }
+
+      const nextDoc = {
+        ...state.document,
+        pieces: [...state.document.pieces.filter((p) => p.id !== pieceId), pieceA, pieceB],
+        stitchLines: state.document.stitchLines.filter((s) => s.sourcePieceId !== pieceId),
+        offsetPaths: state.document.offsetPaths.filter((o) => o.sourcePieceId !== pieceId),
+      }
+
+      return {
+        ...commit(state, nextDoc),
+        toolMode: 'select',
+        selection: null,
+        selectedPieceIds: [pieceA.id],
+        selectedInternalLineId: null,
+        internalLineSelection: null,
       }
     }
 

@@ -4,7 +4,7 @@ import Button from '../ui/Button.jsx'
 
 const smallButtonStyle = { padding: '0.15rem 0.4rem', fontSize: '0.75rem' }
 
-const STYLE_LABELS = { single: '단일 홀', diagonal: '다이아몬드', slash: '대각선(사선)' }
+const STYLE_LABELS = { single: '단일 홀', diagonal: '다이아몬드', slash: '대각선(사선)', backslash: '역사선(사선 반대)' }
 
 function StitchPatternManager({ document, dispatch }) {
   const [name, setName] = useState('기본 스티치')
@@ -60,6 +60,7 @@ function StitchPatternManager({ document, dispatch }) {
             <option value="single">단일 홀</option>
             <option value="diagonal">다이아몬드</option>
             <option value="slash">대각선(사선)</option>
+            <option value="backslash">역사선(사선 반대)</option>
           </select>
         </label>
         <Button icon="➕" onClick={handleAdd}>
