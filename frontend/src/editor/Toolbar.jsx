@@ -169,7 +169,7 @@ function Toolbar({ state, dispatch, actualSize, onToggleActualSize, calibrated, 
         title="닫힌 도형 1개 + 그 도형을 가로지르는 열린 선 1개를 선택하면, 선을 기준으로 도형을 둘로 나눕니다"
       />
       <ToolButton
-        icon="✂️"
+        icon="✁"
         label="점으로 나누기"
         disabled={!vertexSplitTarget}
         onClick={handleSplitAtVertices}
