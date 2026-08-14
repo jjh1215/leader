@@ -57,6 +57,17 @@ function StitchLineControls({ piece, document, dispatch }) {
     return <p style={{ fontSize: '0.7rem', color: '#888', marginLeft: '0.5rem' }}>스티치 라인을 추가하려면 먼저 위에서 프리셋을 만드세요</p>
   }
 
+  // `defId` is only ever set at mount time or by the dropdown's onChange --
+  // if this control first mounted before any preset existed yet (or the
+  // preset it had selected was later deleted), the stored id goes stale and
+  // stays stale, since useState's initial value isn't re-evaluated on later
+  // renders. Re-validating here (instead of trusting `defId` directly)
+  // means a stale/empty id always falls back to a real preset, so "스티치
+  // 라인" never silently creates a stitch line pointing at nothing.
+  const validDefId = document.stitchPatternDefs.some((d) => d.id === defId)
+    ? defId
+    : document.stitchPatternDefs[0].id
+
   return (
     <div style={{ marginLeft: '0.5rem', marginTop: '0.25rem' }}>
       <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -68,7 +79,7 @@ function StitchLineControls({ piece, document, dispatch }) {
           style={{ width: '3.5rem' }}
         />
         <span style={{ fontSize: '0.75rem' }}>mm 인셋</span>
-        <select value={defId} onChange={(e) => setDefId(e.target.value)}>
+        <select value={validDefId} onChange={(e) => setDefId(e.target.value)}>
           {document.stitchPatternDefs.map((def) => (
             <option key={def.id} value={def.id}>
               {def.name}
@@ -86,7 +97,7 @@ function StitchLineControls({ piece, document, dispatch }) {
                 name: `스티치 -${inset}mm`,
                 sourcePieceId: piece.id,
                 insetDistance: inset,
-                stitchPatternDefId: defId,
+                stitchPatternDefId: validDefId,
               },
             })
           }
@@ -112,6 +123,13 @@ function InternalLineStitchControls({ internalLine, document, dispatch }) {
 
   if (document.stitchPatternDefs.length === 0) return null
 
+  // See StitchLineControls -- `defId` can go stale (mounted before any
+  // preset existed, or its preset got deleted later) since useState's
+  // initial value only runs once. Re-validate before using it anywhere.
+  const validDefId = document.stitchPatternDefs.some((d) => d.id === defId)
+    ? defId
+    : document.stitchPatternDefs[0].id
+
   return (
     <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
       <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -134,7 +152,7 @@ function InternalLineStitchControls({ internalLine, document, dispatch }) {
           title="선 기준 좌우 치우침 (+/-)"
         />
         <span style={{ fontSize: '0.75rem' }}>mm 방향</span>
-        <select value={defId} onChange={(e) => setDefId(e.target.value)}>
+        <select value={validDefId} onChange={(e) => setDefId(e.target.value)}>
           {document.stitchPatternDefs.map((def) => (
             <option key={def.id} value={def.id}>
               {def.name}
@@ -153,7 +171,7 @@ function InternalLineStitchControls({ internalLine, document, dispatch }) {
                 sourceInternalLineId: internalLine.id,
                 insetDistance: inset,
                 sideOffset,
-                stitchPatternDefId: defId,
+                stitchPatternDefId: validDefId,
               },
             })
           }
