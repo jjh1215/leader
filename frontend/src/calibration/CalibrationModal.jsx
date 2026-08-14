@@ -72,8 +72,9 @@ function CalibrationModal({ onClose, onCalibrate }) {
         <h2 style={{ marginTop: 0 }}>화면 보정</h2>
         <p>
           모니터마다 화면 배율이 달라서, 브라우저가 계산한 "1mm"는 실제 물리적 mm와 다른 경우가 많습니다.
-          아래 막대 오른쪽 끝의 <strong>파란 손잡이를 드래그</strong>하거나 <strong>좌우 화살표 키</strong>로
-          (Shift=10px씩) 조절해서, 화면에 대고 있는 자나 카드 등 실제 물건의 길이에 막대 길이를 정확히 맞춰주세요.
+          막대 끝의 검은 선이 정확한 길이 기준점입니다 (파란 손잡이는 그 선을 가리지 않도록 아래로 따로
+          떨어뜨려 놨어요). 아래쪽 <strong>파란 손잡이를 드래그</strong>하거나 <strong>좌우 화살표 키</strong>로
+          (Shift=10px씩) 조절해서, 화면에 대고 있는 자나 카드 등 실제 물건의 길이에 검은 선을 정확히 맞춰주세요.
         </p>
         <form onSubmit={handleSubmit}>
           <label>
@@ -87,8 +88,15 @@ function CalibrationModal({ onClose, onCalibrate }) {
             />
           </label>
 
-          <div style={{ marginTop: '1rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
+          <div style={{ marginTop: '1rem', overflowX: 'auto', paddingBottom: '3rem' }}>
             <div style={{ position: 'relative', width: barPx, height: 12, background: '#e0781e' }}>
+              {/* Precise edge marker -- nothing else touches this, so the bar's
+                  true measurable end is always unambiguous when lining it up
+                  against a real object. */}
+              <div style={{ position: 'absolute', right: -1, top: -6, width: 2, height: 24, background: '#333' }} />
+              {/* Thin guide down to the handle, kept well clear of the bar so
+                  it never obscures the edge marker above. */}
+              <div style={{ position: 'absolute', right: -0.5, top: 12, width: 1, height: 28, background: '#ccc' }} />
               <div
                 onPointerDown={handleDragStart}
                 onKeyDown={handleHandleKeyDown}
@@ -100,14 +108,15 @@ function CalibrationModal({ onClose, onCalibrate }) {
                 title="드래그하거나 화살표 키로 길이 조절 (Shift=10px씩)"
                 style={{
                   position: 'absolute',
-                  right: -9,
-                  top: -6,
-                  width: 18,
-                  height: 24,
+                  right: -11,
+                  top: 42,
+                  width: 22,
+                  height: 22,
                   background: '#1e6fe0',
-                  borderRadius: 4,
+                  borderRadius: '50%',
                   cursor: 'ew-resize',
                   touchAction: 'none',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
                 }}
               />
             </div>
