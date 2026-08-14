@@ -72,9 +72,9 @@ function CalibrationModal({ onClose, onCalibrate }) {
         <h2 style={{ marginTop: 0 }}>화면 보정</h2>
         <p>
           모니터마다 화면 배율이 달라서, 브라우저가 계산한 "1mm"는 실제 물리적 mm와 다른 경우가 많습니다.
-          막대 끝의 검은 선이 정확한 길이 기준점입니다 (파란 손잡이는 그 선을 가리지 않도록 아래로 따로
-          떨어뜨려 놨어요). 아래쪽 <strong>파란 손잡이를 드래그</strong>하거나 <strong>좌우 화살표 키</strong>로
-          (Shift=10px씩) 조절해서, 화면에 대고 있는 자나 카드 등 실제 물건의 길이에 검은 선을 정확히 맞춰주세요.
+          막대 끝의 검은 테두리가 정확한 길이 기준점입니다. 아래쪽의{' '}
+          <strong>파란 손잡이를 드래그</strong>하거나 <strong>좌우 화살표 키</strong>로 (Shift=10px씩) 막대
+          길이를 조절해서, 화면에 대고 있는 자나 카드 등 실제 물건의 길이에 검은 테두리를 정확히 맞춰주세요.
         </p>
         <form onSubmit={handleSubmit}>
           <label>
@@ -88,41 +88,44 @@ function CalibrationModal({ onClose, onCalibrate }) {
             />
           </label>
 
-          <div style={{ marginTop: '1rem', overflowX: 'auto', paddingBottom: '3rem' }}>
-            <div style={{ position: 'relative', width: barPx, height: 12, background: '#e0781e' }}>
-              {/* Precise edge marker -- its left edge starts exactly where the
-                  orange bar ends, so it never covers any of the bar's true
-                  tip (the actual reference point being aligned against a
-                  real object). */}
-              <div style={{ position: 'absolute', left: barPx, top: -6, width: 2, height: 24, background: '#333' }} />
-              {/* Thin guide down to the handle, kept well clear of the bar so
-                  it never obscures the edge marker above. */}
-              <div style={{ position: 'absolute', left: barPx, top: 12, width: 1, height: 28, background: '#ccc' }} />
-              <div
-                onPointerDown={handleDragStart}
-                onKeyDown={handleHandleKeyDown}
-                tabIndex={0}
-                role="slider"
-                aria-label="막대 길이"
-                aria-valuenow={barPx}
-                aria-valuemin={MIN_BAR_PX}
-                title="드래그하거나 화살표 키로 길이 조절 (Shift=10px씩)"
-                style={{
-                  position: 'absolute',
-                  right: -11,
-                  top: 42,
-                  width: 22,
-                  height: 22,
-                  background: '#1e6fe0',
-                  borderRadius: '50%',
-                  cursor: 'ew-resize',
-                  touchAction: 'none',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
-                }}
-              />
-            </div>
+          {/* Normal document flow throughout (no absolute-positioned overlays
+              straddling fragile pixel offsets) -- the edge marker is just the
+              bar's own border, flush with its true end by construction, and
+              the handle lives in its own row below with a plain margin gap,
+              so neither can ever end up covering the bar. */}
+          <div style={{ marginTop: '1rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
+            <div
+              style={{
+                width: barPx,
+                height: 12,
+                background: '#e0781e',
+                borderRight: '3px solid #1a1a1a',
+              }}
+            />
           </div>
-          <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>막대 길이: {barPx}px</p>
+          <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <div
+              onPointerDown={handleDragStart}
+              onKeyDown={handleHandleKeyDown}
+              tabIndex={0}
+              role="slider"
+              aria-label="막대 길이"
+              aria-valuenow={barPx}
+              aria-valuemin={MIN_BAR_PX}
+              title="드래그하거나 화살표 키로 길이 조절 (Shift=10px씩)"
+              style={{
+                flexShrink: 0,
+                width: 22,
+                height: 22,
+                background: '#1e6fe0',
+                borderRadius: '50%',
+                cursor: 'ew-resize',
+                touchAction: 'none',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+              }}
+            />
+            <span style={{ fontSize: '0.75rem', color: '#888' }}>드래그(또는 화살표 키)로 길이 조절 · 현재 {barPx}px</span>
+          </div>
 
           <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
             <Button type="button" onClick={onClose}>
