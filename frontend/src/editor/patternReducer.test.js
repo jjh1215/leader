@@ -459,79 +459,78 @@ describe('patternReducer', () => {
     })
   })
 
-  describe('TOGGLE_VERTEX_SELECTION', () => {
-    it('adds then removes a vertex from the multi-select, clearing single/piece selection', () => {
-      let state = initState()
-      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
-      const pieceId = state.document.pieces[0].id
-      const [v0, v1] = state.document.pieces[0].vertices
-
-      state = patternReducer(state, { type: 'SELECT_PIECE', pieceId, additive: false })
-      state = patternReducer(state, { type: 'TOGGLE_VERTEX_SELECTION', pieceId, vertexId: v0.id })
-      expect(state.selectedVertexIds).toEqual([{ pieceId, vertexId: v0.id }])
-      expect(state.selectedPieceIds).toEqual([])
-
-      state = patternReducer(state, { type: 'TOGGLE_VERTEX_SELECTION', pieceId, vertexId: v1.id })
-      expect(state.selectedVertexIds).toEqual([
-        { pieceId, vertexId: v0.id },
-        { pieceId, vertexId: v1.id },
-      ])
-
-      state = patternReducer(state, { type: 'TOGGLE_VERTEX_SELECTION', pieceId, vertexId: v0.id })
-      expect(state.selectedVertexIds).toEqual([{ pieceId, vertexId: v1.id }])
-    })
-  })
-
-  describe('SPLIT_PIECE_AT_VERTICES', () => {
-    it('re-splits a merged piece exactly at the seam points, completing the split -> merge -> split round trip', () => {
+  describe('ADD_INTERNAL_LINE', () => {
+    it('keeps the piece as one 6-vertex shape and records the crossing as an internalLine, instead of splitting it', () => {
       let state = initState()
       state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
       const rectId = state.document.pieces[0].id
       state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: -5, y: 5 }, end: { x: 15, y: 5 } })
       const lineId = state.document.pieces[1].id
-      state = patternReducer(state, { type: 'SPLIT_PIECE', closedPieceId: rectId, linePieceId: lineId })
-      const [idA, idB] = state.document.pieces.map((p) => p.id)
-      state = patternReducer(state, { type: 'MERGE_PIECES', pieceIdA: idA, pieceIdB: idB })
-      const mergedId = state.document.pieces[0].id
-      const merged = state.document.pieces[0]
 
-      const seamVertices = merged.vertices.filter(
-        (v) => (v.point.x === 10 && v.point.y === 5) || (v.point.x === 0 && v.point.y === 5)
+      state = patternReducer(state, { type: 'ADD_INTERNAL_LINE', closedPieceId: rectId, linePieceId: lineId })
+
+      // Still one piece -- not split -- and the line piece is consumed.
+      expect(state.document.pieces).toHaveLength(1)
+      const piece = state.document.pieces[0]
+      expect(piece.id).toBe(rectId)
+      expect(piece.closed).toBe(true)
+
+      // 6 vertices now (hexagon-like): the original 4 corners plus the 2
+      // crossing points, and the outer silhouette is unchanged (the new
+      // points sit exactly on the existing edges).
+      expect(piece.vertices.map((v) => v.point)).toEqual([
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 5 },
+        { x: 10, y: 10 },
+        { x: 0, y: 10 },
+        { x: 0, y: 5 },
+      ])
+
+      // Original corners keep their own vertex identity (not regenerated).
+      const originalCornerIds = new Set(
+        state.past[state.past.length - 1].pieces[0].vertices.map((v) => v.id)
       )
-      expect(seamVertices).toHaveLength(2)
+      const survivingOriginalCorners = piece.vertices.filter((v) => originalCornerIds.has(v.id))
+      expect(survivingOriginalCorners).toHaveLength(4)
 
-      state = patternReducer(state, {
-        type: 'SPLIT_PIECE_AT_VERTICES',
-        pieceId: mergedId,
-        vertexIdA: seamVertices[0].id,
-        vertexIdB: seamVertices[1].id,
-      })
-      expect(state.document.pieces).toHaveLength(2)
-      expect(state.document.pieces.every((p) => p.closed)).toBe(true)
-      const bbox = (piece) => {
-        const xs = piece.vertices.map((v) => v.point.x)
-        const ys = piece.vertices.map((v) => v.point.y)
-        return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) }
-      }
-      const bboxes = state.document.pieces.map(bbox).sort((a, b) => a.minY - b.minY)
-      expect(bboxes[0]).toEqual({ minX: 0, maxX: 10, minY: 0, maxY: 5 })
-      expect(bboxes[1]).toEqual({ minX: 0, maxX: 10, minY: 5, maxY: 10 })
+      // The internal line connects the 2 new (non-original) vertices.
+      expect(state.document.internalLines).toHaveLength(1)
+      const line = state.document.internalLines[0]
+      expect(line.sourcePieceId).toBe(rectId)
+      const lineVertexIds = new Set([line.vertexIdA, line.vertexIdB])
+      const lineVertices = piece.vertices.filter((v) => lineVertexIds.has(v.id))
+      expect(lineVertices.map((v) => v.point).sort((a, b) => a.x - b.x)).toEqual([
+        { x: 0, y: 5 },
+        { x: 10, y: 5 },
+      ])
+      expect(lineVertices.every((v) => !originalCornerIds.has(v.id))).toBe(true)
     })
 
-    it('is a no-op for equal vertex ids or a piece that is not closed', () => {
+    it('is a no-op when the line does not cross the shape exactly twice', () => {
       let state = initState()
       state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
-      const pieceId = state.document.pieces[0].id
-      const vId = state.document.pieces[0].vertices[0].id
+      const rectId = state.document.pieces[0].id
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: 20, y: 20 }, end: { x: 30, y: 30 } })
+      const lineId = state.document.pieces[1].id
 
       const before = state
-      state = patternReducer(state, {
-        type: 'SPLIT_PIECE_AT_VERTICES',
-        pieceId,
-        vertexIdA: vId,
-        vertexIdB: vId,
-      })
+      state = patternReducer(state, { type: 'ADD_INTERNAL_LINE', closedPieceId: rectId, linePieceId: lineId })
       expect(state).toBe(before)
+    })
+
+    it('drops the internal line when one of its endpoint vertices is deleted', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const rectId = state.document.pieces[0].id
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: -5, y: 5 }, end: { x: 15, y: 5 } })
+      const lineId = state.document.pieces[1].id
+      state = patternReducer(state, { type: 'ADD_INTERNAL_LINE', closedPieceId: rectId, linePieceId: lineId })
+      expect(state.document.internalLines).toHaveLength(1)
+
+      const endpointId = state.document.internalLines[0].vertexIdA
+      state = patternReducer(state, { type: 'DELETE_VERTEX', pieceId: rectId, vertexId: endpointId })
+      expect(state.document.internalLines).toHaveLength(0)
     })
   })
 })

@@ -63,7 +63,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
   const [hoverDock, setHoverDock] = useState(null) // dock the hoverPoint is currently snapped to, if any
   const [marquee, setMarquee] = useState(null) // transient drag-select box: { start, end, additive }
 
-  const { document, toolMode, activePieceId, selection, selectedPieceIds, selectedVertexIds } = state
+  const { document, toolMode, activePieceId, selection, selectedPieceIds } = state
 
   function toDoc(e) {
     return screenToDocPoint(svgRef.current, viewBox, e.clientX, e.clientY)
@@ -196,12 +196,6 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     if (toolMode === 'select') {
       const hit = findNearestVertex(point)
       if (hit) {
-        if (e.shiftKey) {
-          // Shift+click builds a multi-vertex selection (e.g. 2 points to
-          // split at) instead of the normal single-select-and-drag.
-          dispatch({ type: 'TOGGLE_VERTEX_SELECTION', pieceId: hit.pieceId, vertexId: hit.vertexId })
-          return
-        }
         dispatch({ type: 'SELECT_VERTEX', pieceId: hit.pieceId, vertexId: hit.vertexId })
         const piece = document.pieces.find((p) => p.id === hit.pieceId)
         const v = piece.vertices.find((vv) => vv.id === hit.vertexId)
@@ -298,12 +292,10 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         } else if (!marquee.additive) {
           dispatch({ type: 'CLEAR_SELECTION' })
           dispatch({ type: 'CLEAR_PIECE_SELECTION' })
-          dispatch({ type: 'CLEAR_VERTEX_SELECTION' })
         }
       } else if (!marquee.additive) {
         dispatch({ type: 'CLEAR_SELECTION' })
         dispatch({ type: 'CLEAR_PIECE_SELECTION' })
-        dispatch({ type: 'CLEAR_VERTEX_SELECTION' })
       }
       setMarquee(null)
     }
@@ -416,17 +408,14 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
             )}
             {(toolMode === 'select' || isActive) &&
               vertices.map((v) => {
-                const isMultiSelected = selectedVertexIds.some(
-                  (sv) => sv.pieceId === piece.id && sv.vertexId === v.id
-                )
                 const isSingleSelected = selection?.vertexId === v.id
                 return (
                   <circle
                     key={v.id}
                     cx={v.point.x}
                     cy={v.point.y}
-                    r={isSingleSelected || isMultiSelected ? vertexRadiusMm * 1.5 : vertexRadiusMm}
-                    fill={isSingleSelected ? '#e0781e' : isMultiSelected ? '#1e6fe0' : '#fff'}
+                    r={isSingleSelected ? vertexRadiusMm * 1.5 : vertexRadiusMm}
+                    fill={isSingleSelected ? '#e0781e' : '#fff'}
                     stroke="#7a4a1e"
                     strokeWidth={1}
                     vectorEffect="non-scaling-stroke"
@@ -456,6 +445,27 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
               />
             ))}
           </g>
+        )
+      })}
+
+      {document.internalLines.map((line) => {
+        const piece = document.pieces.find((p) => p.id === line.sourcePieceId)
+        if (!piece) return null
+        const a = piece.vertices.find((v) => v.id === line.vertexIdA)
+        const b = piece.vertices.find((v) => v.id === line.vertexIdB)
+        if (!a || !b) return null
+        return (
+          <line
+            key={line.id}
+            x1={a.point.x}
+            y1={a.point.y}
+            x2={b.point.x}
+            y2={b.point.y}
+            stroke="#7a4a1e"
+            strokeDasharray="5 3"
+            strokeWidth={1.2}
+            vectorEffect="non-scaling-stroke"
+          />
         )
       })}
 

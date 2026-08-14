@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { splitClosedPieceAtVertexIndices, splitClosedPolygonByLine } from './splitPolygon.js'
-import { stitchMergeAtSharedVertices } from './stitchMerge.js'
+import { insertLineIntersectionPoints, splitClosedPolygonByLine } from './splitPolygon.js'
 
 const square10 = [
   { x: 0, y: 0 },
@@ -72,63 +71,31 @@ describe('splitClosedPolygonByLine', () => {
   })
 })
 
-function v(x, y) {
-  return { point: { x, y }, cornerRadius: 0 }
-}
-
-describe('splitClosedPieceAtVertexIndices', () => {
-  it('splits a hexagon (the result of a prior split+merge) back at its own seam points', () => {
-    // Exactly the 6-point shape stitchMerge.js produces when re-joining a
-    // split square: 4 original corners + the 2 seam points at index 0 and 3.
-    const merged = [v(10, 5), v(10, 10), v(0, 10), v(0, 5), v(0, 0), v(10, 0)]
-    const result = splitClosedPieceAtVertexIndices(merged, 0, 3)
+describe('insertLineIntersectionPoints', () => {
+  it('keeps the square as one 6-point boundary (same silhouette) plus the internal line, instead of splitting it', () => {
+    const result = insertLineIntersectionPoints(square10, { x: -5, y: 5 }, { x: 15, y: 5 })
     expect(result).not.toBeNull()
-    const [arcA, arcB] = result
-    expect(arcA.map((p) => p.point)).toEqual([
+
+    // The 2 new points land exactly on the existing left/right edges (both
+    // collinear with their neighbors), so the boundary is visually identical
+    // to the plain square -- just with 2 extra real vertices to drag.
+    expect(result.boundary.map((b) => b.point)).toEqual([
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
       { x: 10, y: 5 },
       { x: 10, y: 10 },
       { x: 0, y: 10 },
       { x: 0, y: 5 },
     ])
-    expect(arcB.map((p) => p.point)).toEqual([
-      { x: 0, y: 5 },
-      { x: 0, y: 0 },
-      { x: 10, y: 0 },
+    expect(result.boundary.map((b) => b.inserted)).toEqual([false, false, true, false, false, true])
+    expect(result.internalLine).toEqual([
       { x: 10, y: 5 },
+      { x: 0, y: 5 },
     ])
   })
 
-  it('round-trips: split by line -> merge (stitch) -> split at the seam vertices -> back to the original two halves', () => {
-    const square = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }]
-    const [loopA, loopB] = splitClosedPolygonByLine(square, { x: -5, y: 5 }, { x: 15, y: 5 })
-    const merged = stitchMergeAtSharedVertices(
-      loopA.map((p) => ({ point: p, cornerRadius: 0 })),
-      loopB.map((p) => ({ point: p, cornerRadius: 0 }))
-    )
-
-    const seamIndices = [
-      merged.findIndex((p) => p.point.x === 10 && p.point.y === 5),
-      merged.findIndex((p) => p.point.x === 0 && p.point.y === 5),
-    ]
-    const [arcA, arcB] = splitClosedPieceAtVertexIndices(merged, ...seamIndices)
-    expect(arcA.map((p) => p.point)).toEqual(loopA)
-    expect(arcB.map((p) => p.point)).toEqual(loopB)
-  })
-
-  it('preserves cornerRadius on surviving vertices instead of regenerating them', () => {
-    const shape = [{ ...v(0, 0), cornerRadius: 5 }, v(10, 0), v(10, 10), v(0, 10)]
-    const [arcA] = splitClosedPieceAtVertexIndices(shape, 0, 2)
-    expect(arcA.find((p) => p.point.x === 0 && p.point.y === 0).cornerRadius).toBe(5)
-  })
-
-  it('returns null for equal or out-of-range indices', () => {
-    const shape = [v(0, 0), v(10, 0), v(10, 10), v(0, 10)]
-    expect(splitClosedPieceAtVertexIndices(shape, 1, 1)).toBeNull()
-    expect(splitClosedPieceAtVertexIndices(shape, 0, 99)).toBeNull()
-  })
-
-  it('returns null when the two indices are adjacent (one side would be a degenerate sliver)', () => {
-    const shape = [v(0, 0), v(10, 0), v(10, 10), v(0, 10)]
-    expect(splitClosedPieceAtVertexIndices(shape, 0, 1)).toBeNull()
+  it('returns null under the same conditions splitClosedPolygonByLine rejects (not exactly 2 crossings)', () => {
+    expect(insertLineIntersectionPoints(square10, { x: 20, y: 20 }, { x: 30, y: 30 })).toBeNull()
+    expect(insertLineIntersectionPoints(square10, { x: 5, y: 5 }, { x: 20, y: 5 })).toBeNull()
   })
 })

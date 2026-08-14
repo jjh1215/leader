@@ -5,7 +5,7 @@ import { useReducer } from 'react'
 import { generateId } from './geometry/id.js'
 import { flattenToPolygon } from './geometry/fillet.js'
 import { resolveDockPoint } from './geometry/edgeDock.js'
-import { splitClosedPieceAtVertexIndices, splitClosedPolygonByLine } from './geometry/splitPolygon.js'
+import { insertLineIntersectionPoints, splitClosedPolygonByLine } from './geometry/splitPolygon.js'
 import { unionPolygons } from './geometry/polygonUnion.js'
 import { stitchMergeAtSharedVertices } from './geometry/stitchMerge.js'
 
@@ -17,6 +17,7 @@ export const emptyDocument = () => ({
   stitchPatternDefs: [],
   stitchLines: [],
   offsetPaths: [],
+  internalLines: [], // fold/score guide lines marked across a single piece (see ADD_INTERNAL_LINE)
 })
 
 function cloneDoc(doc) {
@@ -31,8 +32,7 @@ function initState(document) {
     toolMode: 'select',
     activePieceId: null,
     selection: null, // { pieceId, vertexId }
-    selectedPieceIds: [], // whole-piece selection, for merge etc. -- separate from vertex `selection`
-    selectedVertexIds: [], // multi-vertex selection (Shift+click), for split-at-these-2-points
+    selectedPieceIds: [], // whole-piece selection, for merge/split/internal-line etc.
   }
 }
 
@@ -179,7 +179,6 @@ export function patternReducer(state, action) {
         ...state,
         selection: { pieceId: action.pieceId, vertexId: action.vertexId },
         selectedPieceIds: [],
-        selectedVertexIds: [],
       }
 
     case 'CLEAR_SELECTION':
@@ -188,13 +187,13 @@ export function patternReducer(state, action) {
     case 'SELECT_PIECE': {
       const { pieceId, additive } = action
       if (!additive) {
-        return { ...state, selection: null, selectedPieceIds: [pieceId], selectedVertexIds: [] }
+        return { ...state, selection: null, selectedPieceIds: [pieceId] }
       }
       const already = state.selectedPieceIds.includes(pieceId)
       const selectedPieceIds = already
         ? state.selectedPieceIds.filter((id) => id !== pieceId)
         : [...state.selectedPieceIds, pieceId]
-      return { ...state, selection: null, selectedPieceIds, selectedVertexIds: [] }
+      return { ...state, selection: null, selectedPieceIds }
     }
 
     // Marquee/drag-select result: a set of piece ids all at once. Unlike
@@ -205,64 +204,80 @@ export function patternReducer(state, action) {
       const selectedPieceIds = additive
         ? Array.from(new Set([...state.selectedPieceIds, ...pieceIds]))
         : pieceIds
-      return { ...state, selection: null, selectedPieceIds, selectedVertexIds: [] }
+      return { ...state, selection: null, selectedPieceIds }
     }
 
     case 'CLEAR_PIECE_SELECTION':
       return { ...state, selectedPieceIds: [] }
 
-    // Multi-vertex selection (Shift+click on a vertex in select mode) --
-    // separate from `selection` (the single-vertex, drag-to-move kind).
-    // Used to pick 2 points on the same closed piece to split it at, e.g.
-    // re-selecting the seam MERGE_PIECES left behind.
-    case 'TOGGLE_VERTEX_SELECTION': {
-      const { pieceId, vertexId } = action
-      const already = state.selectedVertexIds.some((v) => v.pieceId === pieceId && v.vertexId === vertexId)
-      const selectedVertexIds = already
-        ? state.selectedVertexIds.filter((v) => !(v.pieceId === pieceId && v.vertexId === vertexId))
-        : [...state.selectedVertexIds, { pieceId, vertexId }]
-      return { ...state, selection: null, selectedPieceIds: [], selectedVertexIds }
-    }
+    // The "mark, don't cut" counterpart to SPLIT_PIECE: same selection (a
+    // closed piece + a crossing open 2-point line) and the same underlying
+    // line-vs-boundary math, but instead of dividing the piece into two, it
+    // inserts the 2 crossing points as real vertices into the piece's own
+    // boundary (so a rectangle behaves like a hexagon afterward -- both new
+    // points are individually draggable, and dragging them reshapes the
+    // outer boundary like any other vertex) and records the line between
+    // them as an `internalLine` entry, rendered as a fold/score guide across
+    // the piece's interior. The piece stays one piece; only the line piece
+    // is consumed.
+    case 'ADD_INTERNAL_LINE': {
+      const { closedPieceId, linePieceId } = action
+      const closedPiece = state.document.pieces.find((p) => p.id === closedPieceId)
+      const linePiece = state.document.pieces.find((p) => p.id === linePieceId)
+      if (
+        !closedPiece ||
+        !linePiece ||
+        !closedPiece.closed ||
+        linePiece.closed ||
+        linePiece.vertices.length !== 2
+      ) {
+        return state
+      }
 
-    case 'CLEAR_VERTEX_SELECTION':
-      return { ...state, selectedVertexIds: [] }
-
-    // The inverse of MERGE_PIECES' stitch path: cuts a closed piece into two
-    // at 2 of its own existing vertices (see splitPolygon.js), instead of
-    // needing a separate cutting-line piece. Typically used to re-split
-    // exactly at the seam a prior stitch-merge left behind.
-    case 'SPLIT_PIECE_AT_VERTICES': {
-      const { pieceId, vertexIdA, vertexIdB } = action
-      const piece = state.document.pieces.find((p) => p.id === pieceId)
-      if (!piece || !piece.closed || vertexIdA === vertexIdB) return state
-
-      const indexA = piece.vertices.findIndex((v) => v.id === vertexIdA)
-      const indexB = piece.vertices.findIndex((v) => v.id === vertexIdB)
-      if (indexA === -1 || indexB === -1) return state
-
-      const result = splitClosedPieceAtVertexIndices(piece.vertices, indexA, indexB)
+      const polygon = flattenToPolygon(closedPiece.vertices, true)
+      const result = insertLineIntersectionPoints(polygon, linePiece.vertices[0].point, linePiece.vertices[1].point)
       if (!result) return state
 
-      const toPiece = (arc, suffix) => ({
-        id: generateId(),
-        name: `${piece.name} ${suffix}`,
-        closed: true,
-        vertices: arc.map((v) => ({ ...v, id: generateId() })),
+      // Match each non-inserted boundary point back to its original vertex
+      // (exact position match -- reliable for the common no-fillet case,
+      // where flattening is a 1:1 passthrough) to preserve id/cornerRadius/
+      // dock; only the 2 newly inserted points get fresh vertex objects.
+      const findOriginal = (point) =>
+        closedPiece.vertices.find((v) => v.point.x === point.x && v.point.y === point.y)
+
+      const newVertexIds = []
+      const nextVertices = result.boundary.map(({ point, inserted }) => {
+        if (!inserted) {
+          const original = findOriginal(point)
+          if (original) return original
+        }
+        const id = generateId()
+        newVertexIds.push(id)
+        return { id, point, cornerRadius: 0, dock: null }
       })
-      const pieceA = toPiece(result[0], 'A')
-      const pieceB = toPiece(result[1], 'B')
+
+      const updatedPiece = { ...closedPiece, vertices: nextVertices }
+      const internalLine = {
+        id: generateId(),
+        name: `내부선`,
+        sourcePieceId: closedPieceId,
+        vertexIdA: newVertexIds[0],
+        vertexIdB: newVertexIds[1],
+      }
 
       const nextDoc = {
         ...state.document,
-        pieces: [...state.document.pieces.filter((p) => p.id !== pieceId), pieceA, pieceB],
-        stitchLines: state.document.stitchLines.filter((s) => s.sourcePieceId !== pieceId),
-        offsetPaths: state.document.offsetPaths.filter((o) => o.sourcePieceId !== pieceId),
+        pieces: state.document.pieces
+          .filter((p) => p.id !== linePieceId)
+          .map((p) => (p.id === closedPieceId ? updatedPiece : p)),
+        internalLines: [...state.document.internalLines, internalLine],
+        stitchLines: state.document.stitchLines.filter((s) => s.sourcePieceId !== linePieceId),
+        offsetPaths: state.document.offsetPaths.filter((o) => o.sourcePieceId !== linePieceId),
       }
 
       return {
         ...commit(state, nextDoc),
-        selectedPieceIds: [pieceA.id, pieceB.id],
-        selectedVertexIds: [],
+        selectedPieceIds: [closedPieceId],
         activePieceId: null,
         selection: null,
       }
@@ -512,7 +527,15 @@ export function patternReducer(state, action) {
       const nextPieces = state.document.pieces.map((p) =>
         p.id !== action.pieceId ? p : { ...p, vertices: p.vertices.filter((v) => v.id !== action.vertexId) }
       )
-      const nextState = commit(state, { ...state.document, pieces: nextPieces })
+      const nextDoc = {
+        ...state.document,
+        pieces: nextPieces,
+        // An internal line's endpoint no longer exists -- the line goes with it.
+        internalLines: state.document.internalLines.filter(
+          (l) => l.vertexIdA !== action.vertexId && l.vertexIdB !== action.vertexId
+        ),
+      }
+      const nextState = commit(state, nextDoc)
       return state.selection?.vertexId === action.vertexId ? { ...nextState, selection: null } : nextState
     }
 
@@ -522,6 +545,7 @@ export function patternReducer(state, action) {
         pieces: state.document.pieces.filter((p) => p.id !== action.pieceId),
         stitchLines: state.document.stitchLines.filter((s) => s.sourcePieceId !== action.pieceId),
         offsetPaths: state.document.offsetPaths.filter((o) => o.sourcePieceId !== action.pieceId),
+        internalLines: state.document.internalLines.filter((l) => l.sourcePieceId !== action.pieceId),
       }
       const nextState = commit(state, nextDoc)
       const wasActive = state.activePieceId === action.pieceId
@@ -532,7 +556,6 @@ export function patternReducer(state, action) {
         toolMode: wasActive ? 'select' : nextState.toolMode,
         selection: hadSelection ? null : nextState.selection,
         selectedPieceIds: nextState.selectedPieceIds.filter((id) => id !== action.pieceId),
-        selectedVertexIds: nextState.selectedVertexIds.filter((v) => v.pieceId !== action.pieceId),
       }
     }
 
@@ -546,6 +569,7 @@ export function patternReducer(state, action) {
         pieces: state.document.pieces.filter((p) => !pieceIds.includes(p.id)),
         stitchLines: state.document.stitchLines.filter((s) => !pieceIds.includes(s.sourcePieceId)),
         offsetPaths: state.document.offsetPaths.filter((o) => !pieceIds.includes(o.sourcePieceId)),
+        internalLines: state.document.internalLines.filter((l) => !pieceIds.includes(l.sourcePieceId)),
       }
       const nextState = commit(state, nextDoc)
       const wasActive = pieceIds.includes(state.activePieceId)
@@ -556,7 +580,6 @@ export function patternReducer(state, action) {
         toolMode: wasActive ? 'select' : nextState.toolMode,
         selection: hadSelection ? null : nextState.selection,
         selectedPieceIds: nextState.selectedPieceIds.filter((id) => !pieceIds.includes(id)),
-        selectedVertexIds: nextState.selectedVertexIds.filter((v) => !pieceIds.includes(v.pieceId)),
       }
     }
 

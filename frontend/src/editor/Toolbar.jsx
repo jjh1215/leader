@@ -1,5 +1,5 @@
 import { flattenToPolygon } from './geometry/fillet.js'
-import { splitClosedPieceAtVertexIndices, splitClosedPolygonByLine } from './geometry/splitPolygon.js'
+import { insertLineIntersectionPoints, splitClosedPolygonByLine } from './geometry/splitPolygon.js'
 
 const baseButtonStyle = {
   display: 'inline-flex',
@@ -49,7 +49,7 @@ function Divider() {
 }
 
 function Toolbar({ state, dispatch, actualSize, onToggleActualSize, calibrated, onOpenCalibration }) {
-  const { toolMode, document, selectedPieceIds, selectedVertexIds, past, future } = state
+  const { toolMode, document, selectedPieceIds, past, future } = state
 
   const twoSelected =
     selectedPieceIds.length === 2
@@ -85,30 +85,24 @@ function Toolbar({ state, dispatch, actualSize, onToggleActualSize, calibrated, 
     dispatch({ type: 'SPLIT_PIECE', ...splitTarget })
   }
 
-  // Split at 2 selected vertices on the same closed piece -- e.g. re-picking
-  // the seam a stitch-merge left behind and cutting there again, without
-  // needing to draw a fresh line.
-  const vertexSplitTarget =
-    selectedVertexIds.length === 2 &&
-    selectedVertexIds[0].pieceId === selectedVertexIds[1].pieceId &&
-    document.pieces.find((p) => p.id === selectedVertexIds[0].pieceId)?.closed
-      ? {
-          pieceId: selectedVertexIds[0].pieceId,
-          vertexIdA: selectedVertexIds[0].vertexId,
-          vertexIdB: selectedVertexIds[1].vertexId,
-        }
-      : null
-
-  function handleSplitAtVertices() {
-    if (!vertexSplitTarget) return
-    const piece = document.pieces.find((p) => p.id === vertexSplitTarget.pieceId)
-    const indexA = piece.vertices.findIndex((v) => v.id === vertexSplitTarget.vertexIdA)
-    const indexB = piece.vertices.findIndex((v) => v.id === vertexSplitTarget.vertexIdB)
-    if (!splitClosedPieceAtVertexIndices(piece.vertices, indexA, indexB)) {
-      alert('선택한 두 점으로는 나눌 수 없습니다 (너무 가깝게 붙어 있는 점입니다).')
+  // Same selection precondition as "나누기" (a closed piece + a crossing
+  // open line), but marks the crossing instead of cutting: the piece stays
+  // one piece, the 2 crossing points become real vertices on it (so it
+  // behaves like a hexagon afterward), and the line between them is kept as
+  // a visible internal fold/score guide.
+  function handleAddInternalLine() {
+    if (!splitTarget) return
+    const closedPiece = document.pieces.find((p) => p.id === splitTarget.closedPieceId)
+    const linePiece = document.pieces.find((p) => p.id === splitTarget.linePieceId)
+    const polygon = flattenToPolygon(closedPiece.vertices, true)
+    const result = insertLineIntersectionPoints(polygon, linePiece.vertices[0].point, linePiece.vertices[1].point)
+    if (!result) {
+      alert(
+        '선이 면을 정확히 두 번 가로지르지 않아 내부선을 표시할 수 없습니다.\n선의 양 끝이 면 밖에 있고, 면 경계를 한 번만 관통하도록 그려주세요.'
+      )
       return
     }
-    dispatch({ type: 'SPLIT_PIECE_AT_VERTICES', ...vertexSplitTarget })
+    dispatch({ type: 'ADD_INTERNAL_LINE', ...splitTarget })
   }
 
   return (
@@ -169,11 +163,11 @@ function Toolbar({ state, dispatch, actualSize, onToggleActualSize, calibrated, 
         title="닫힌 도형 1개 + 그 도형을 가로지르는 열린 선 1개를 선택하면, 선을 기준으로 도형을 둘로 나눕니다"
       />
       <ToolButton
-        icon="✁"
-        label="점으로 나누기"
-        disabled={!vertexSplitTarget}
-        onClick={handleSplitAtVertices}
-        title="같은 도형 위의 점 2개를 Shift+클릭으로 선택하면(예: 합치기로 생긴 이음점), 그 사이를 잘라 둘로 나눕니다"
+        icon="〰️"
+        label="내부선 표시"
+        disabled={!splitTarget}
+        onClick={handleAddInternalLine}
+        title="닫힌 도형 1개 + 가로지르는 선 1개를 선택하면, 도형은 둘로 나누지 않고 그대로 두면서 교차점 2개를 도형의 진짜 꼭짓점으로 추가하고 그 사이를 내부선(접는선/스티치 가이드)으로 남깁니다"
       />
 
       <Divider />

@@ -5,7 +5,6 @@
 // or crosses a concave shape more than twice is rejected (returns null)
 // rather than guessing, since silently producing wrong cut geometry on a
 // physical cutting tool is worse than a clear "can't split this" refusal.
-import { arcBetween } from './arcBetween.js'
 
 function segmentIntersection(p1, p2, p3, p4) {
   const d1x = p2.x - p1.x
@@ -70,28 +69,31 @@ export function splitClosedPolygonByLine(polygon, lineStart, lineEnd) {
   return [loopA, loopB]
 }
 
-// Splits a closed piece's own vertex list at 2 of its own existing vertices
-// (by index) -- the exact inverse of stitchMerge.js's stitch: instead of
-// general line-vs-boundary intersection math, this is a direct array split,
-// used for "select the seam left by a merge (or any 2 vertices) and split
-// there again" without needing to draw a fresh cutting line. Each output arc
-// becomes a new closed piece; the gap between them (arc end -> arc start) is
-// the new implicit seam edge, mirroring how splitClosedPolygonByLine leaves
-// the cut line as each loop's closing edge.
-// `vertices`: vertex-like objects with a `.point`, kept intact via reference
-// (so cornerRadius/dock on non-cut vertices survive) -- ids are the caller's job.
-// Returns [arcA, arcB], or null if the indices are invalid/equal or either
-// resulting arc would be a degenerate <2-vertex sliver.
-export function splitClosedPieceAtVertexIndices(vertices, indexA, indexB) {
-  const n = vertices.length
-  if (indexA === indexB || indexA < 0 || indexB < 0 || indexA >= n || indexB >= n) return null
+// The "mark, don't cut" variant: instead of dividing the polygon into two
+// loops, inserts the line's 2 boundary-crossing points directly into the
+// polygon's own vertex sequence (so the piece stays ONE piece, now with 2
+// extra real, individually-draggable vertices -- a rectangle behaves like a
+// hexagon afterward) and reports the crossing line separately as the
+// "internal line" endpoints, meant to be rendered as a fold/score guide
+// across the piece's interior. Same "must cross exactly twice" rule and
+// fillet-flattening tradeoff as splitClosedPolygonByLine.
+// Returns { boundary, internalLine } where boundary is [{ point, inserted }]
+// (inserted:true marks the 2 new points, for the caller to assign fresh
+// vertex ids/properties -- inserted:false points can be matched back to
+// their original Vertex by position to preserve id/cornerRadius/dock), or
+// null if the line doesn't cross the boundary exactly twice.
+export function insertLineIntersectionPoints(polygon, lineStart, lineEnd) {
+  if (polygon.length < 3) return null
 
-  const arcA = arcBetween(vertices, indexA, indexB)
-  const arcB = arcBetween(vertices, indexB, indexA)
-  // Each side needs >=3 vertices to be a valid (non-zero-area) closed piece
-  // -- rejects adjacent indices, which would leave one side just the 2 cut
-  // points with nothing else (a zero-area sliver).
-  if (arcA.length < 3 || arcB.length < 3) return null
+  const hits = findBoundaryIntersections(polygon, lineStart, lineEnd)
+  if (hits.length !== 2) return null
 
-  return [arcA, arcB]
+  const n = polygon.length
+  const boundary = []
+  for (let i = 0; i < n; i++) {
+    boundary.push({ point: polygon[i], inserted: false })
+    const hit = hits.find((h) => h.edgeIndex === i)
+    if (hit) boundary.push({ point: hit.point, inserted: true })
+  }
+  return { boundary, internalLine: [hits[0].point, hits[1].point] }
 }
