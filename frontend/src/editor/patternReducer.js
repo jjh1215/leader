@@ -7,6 +7,7 @@ import { flattenToPolygon } from './geometry/fillet.js'
 import { resolveDockPoint } from './geometry/edgeDock.js'
 import { splitClosedPolygonByLine } from './geometry/splitPolygon.js'
 import { unionPolygons } from './geometry/polygonUnion.js'
+import { stitchMergeAtSharedVertices } from './geometry/stitchMerge.js'
 
 const HISTORY_LIMIT = 100
 const DOCK_RESOLVE_PASSES = 5 // lets short dock chains (A on B, B on C) settle
@@ -204,10 +205,12 @@ export function patternReducer(state, action) {
     case 'CLEAR_PIECE_SELECTION':
       return { ...state, selectedPieceIds: [] }
 
-    // Two closed shapes merge via polygon union (clipper-lib, same engine as
-    // offset.js) -- this is the deliberate mirror of SPLIT_PIECE below: no
-    // separate "undo my split" bookkeeping is needed because any two closed
-    // pieces that touch/overlap can always be re-merged this way.
+    // Two closed shapes merge either by stitching their original vertices
+    // back together (the CAD-like, identity-preserving path -- used when
+    // they share exactly 2 vertices, the standard case right after
+    // SPLIT_PIECE) or, failing that, by polygon union (clipper-lib, same
+    // engine as offset.js) for two closed pieces that just happen to
+    // touch/overlap without ever having been split from one another.
     case 'MERGE_PIECES': {
       const { pieceIdA, pieceIdB } = action
       const a = state.document.pieces.find((p) => p.id === pieceIdA)
@@ -215,15 +218,28 @@ export function patternReducer(state, action) {
       if (!a || !b) return state
 
       if (a.closed && b.closed) {
-        const polyA = flattenToPolygon(a.vertices, true)
-        const polyB = flattenToPolygon(b.vertices, true)
-        const unioned = unionPolygons(polyA, polyB)
-        const newPieces = unioned.map((loop, i) => ({
-          id: generateId(),
-          name: unioned.length > 1 ? `${a.name} ${i + 1}` : a.name,
-          closed: true,
-          vertices: loop.map((p) => ({ id: generateId(), point: p, cornerRadius: 0, dock: null })),
-        }))
+        const stitched = stitchMergeAtSharedVertices(a.vertices, b.vertices)
+        const newPieces = stitched
+          ? [
+              {
+                id: generateId(),
+                name: a.name,
+                closed: true,
+                vertices: stitched.map((v) => ({ ...v, id: generateId() })),
+              },
+            ]
+          : (() => {
+              const polyA = flattenToPolygon(a.vertices, true)
+              const polyB = flattenToPolygon(b.vertices, true)
+              const unioned = unionPolygons(polyA, polyB)
+              return unioned.map((loop, i) => ({
+                id: generateId(),
+                name: unioned.length > 1 ? `${a.name} ${i + 1}` : a.name,
+                closed: true,
+                vertices: loop.map((p) => ({ id: generateId(), point: p, cornerRadius: 0, dock: null })),
+              }))
+            })()
+
         const nextDoc = {
           ...state.document,
           pieces: [

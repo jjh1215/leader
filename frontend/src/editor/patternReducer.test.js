@@ -413,7 +413,7 @@ describe('patternReducer', () => {
   })
 
   describe('MERGE_PIECES on two closed pieces', () => {
-    it('unions two split halves back into one piece with the original bounding box', () => {
+    it('re-merges two split halves via the CAD-like point stitch, keeping the split points as real vertices', () => {
       let state = initState()
       state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
       const rectId = state.document.pieces[0].id
@@ -426,12 +426,36 @@ describe('patternReducer', () => {
       expect(state.document.pieces).toHaveLength(1)
       const merged = state.document.pieces[0]
       expect(merged.closed).toBe(true)
+      // Stitch merge (not a from-scratch union) reconstructs the exact
+      // 6-point perimeter -- the 4 original corners plus the 2 split points,
+      // each an individually addressable vertex going forward.
+      expect(merged.vertices.map((v) => v.point)).toEqual([
+        { x: 10, y: 5 },
+        { x: 10, y: 10 },
+        { x: 0, y: 10 },
+        { x: 0, y: 5 },
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+      ])
+    })
+
+    it('falls back to polygon union when the two closed pieces do not share exactly 2 vertices', () => {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const idA = state.document.pieces[0].id
+      // Overlapping but independently drawn -- no shared vertices at all.
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 5, y: 5 }, corner2: { x: 15, y: 15 } })
+      const idB = state.document.pieces[1].id
+
+      state = patternReducer(state, { type: 'MERGE_PIECES', pieceIdA: idA, pieceIdB: idB })
+      expect(state.document.pieces).toHaveLength(1)
+      const merged = state.document.pieces[0]
       const xs = merged.vertices.map((v) => v.point.x)
       const ys = merged.vertices.map((v) => v.point.y)
       expect(Math.min(...xs)).toBeCloseTo(0, 6)
-      expect(Math.max(...xs)).toBeCloseTo(10, 6)
+      expect(Math.max(...xs)).toBeCloseTo(15, 6)
       expect(Math.min(...ys)).toBeCloseTo(0, 6)
-      expect(Math.max(...ys)).toBeCloseTo(10, 6)
+      expect(Math.max(...ys)).toBeCloseTo(15, 6)
     })
   })
 })

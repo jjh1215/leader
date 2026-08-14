@@ -237,15 +237,17 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       const dyMm = (e.clientY - panStart.clientY) * (panStart.viewBox.height / rect.height)
       setViewBox({ ...panStart.viewBox, x: panStart.viewBox.x - dxMm, y: panStart.viewBox.y - dyMm })
     } else if (toolMode === 'draw-line' && activePieceId) {
+      // Compute the dock preview even before the first point is placed --
+      // only the shift-orthogonal constraint and the rubber-band *line*
+      // itself need an existing lastVertex to measure/draw from; the dock
+      // ring should already show while aiming the very first click.
       const piece = document.pieces.find((p) => p.id === activePieceId)
       const lastVertex = piece?.vertices[piece.vertices.length - 1]
-      if (lastVertex) {
-        const raw = toDoc(e)
-        const constrained = e.shiftKey ? snapOrthogonal(lastVertex.point, raw) : raw
-        const snap = computeSnap(constrained)
-        setHoverPoint(snap.point)
-        setHoverDock(snap.dock)
-      }
+      const raw = toDoc(e)
+      const constrained = lastVertex && e.shiftKey ? snapOrthogonal(lastVertex.point, raw) : raw
+      const snap = computeSnap(constrained)
+      setHoverPoint(snap.point)
+      setHoverDock(snap.dock)
     }
   }
 
