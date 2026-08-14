@@ -4,13 +4,15 @@ import { insertLineIntersectionPoints, splitClosedPolygonByLine } from './geomet
 const baseButtonStyle = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: '0.4rem',
-  padding: '0.4rem 0.7rem',
+  justifyContent: 'center',
+  width: '2.25rem',
+  height: '2.25rem',
+  padding: 0,
   border: '1px solid #d6d6d6',
   borderRadius: 6,
   background: '#fff',
   color: '#333',
-  fontSize: '0.85rem',
+  fontSize: '1.1rem',
   lineHeight: 1,
   cursor: 'pointer',
 }
@@ -26,12 +28,17 @@ const disabledButtonStyle = {
   cursor: 'default',
 }
 
+// Icon-only button -- the visible label was replaced by a native tooltip
+// (title attribute) combining the name and description, so hovering still
+// tells you what it does without every button's text crowding the row.
+// `aria-label` keeps the name available to screen readers.
 function ToolButton({ icon, label, active, disabled, onClick, title }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      title={title}
+      title={title ? `${label} — ${title}` : label}
+      aria-label={label}
       style={{
         ...baseButtonStyle,
         ...(active ? activeButtonStyle : {}),
@@ -39,7 +46,6 @@ function ToolButton({ icon, label, active, disabled, onClick, title }) {
       }}
     >
       <span aria-hidden="true">{icon}</span>
-      <span>{label}</span>
     </button>
   )
 }
@@ -185,12 +191,14 @@ function Toolbar({ state, dispatch, actualSize, onToggleActualSize, calibrated, 
         label="실행취소"
         disabled={past.length === 0}
         onClick={() => dispatch({ type: 'UNDO' })}
+        title="마지막 작업을 취소합니다"
       />
       <ToolButton
         icon="↷"
         label="다시실행"
         disabled={future.length === 0}
         onClick={() => dispatch({ type: 'REDO' })}
+        title="취소한 작업을 다시 실행합니다"
       />
 
       <Divider />
@@ -207,6 +215,7 @@ function Toolbar({ state, dispatch, actualSize, onToggleActualSize, calibrated, 
         active={actualSize}
         disabled={!calibrated}
         onClick={onToggleActualSize}
+        title="모니터에 자를 대고 확인할 수 있도록 실제 치수 그대로 화면에 표시합니다"
       />
     </div>
   )
