@@ -574,7 +574,17 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     // framed, which reads as the canvas confusingly growing/shrinking for
     // no reason. Disabled outright in this mode instead.
     if (actualSize) return
-    const scale = e.deltaY > 0 ? 1.1 : 0.9
+    // A fixed per-event factor (old: 1.1) feels right for a mouse wheel,
+    // which fires one discrete ~100-unit deltaY notch per step -- but a
+    // trackpad reports the same gesture as a much faster stream of small
+    // deltaY events, so the same fixed factor compounds far quicker and
+    // feels wildly oversensitive. Scale the factor by the actual deltaY
+    // magnitude instead, clamped so one wheel notch can't cause a jump:
+    // exp(100 * 0.001) = 1.105, matching the old mouse-wheel feel, while a
+    // trackpad's smaller per-event deltaY yields a proportionally gentler
+    // per-event zoom.
+    const clampedDeltaY = Math.max(-100, Math.min(100, e.deltaY))
+    const scale = Math.exp(clampedDeltaY * 0.001)
     const point = toDoc(e)
     setViewBox((vb) => ({
       x: point.x - (point.x - vb.x) * scale,
