@@ -140,7 +140,16 @@ function PatternEditorPage() {
       </div>
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ flex: 1, position: 'relative', overflow: 'auto' }}>
+        <div
+          style={{
+            flex: 1,
+            position: 'relative',
+            overflow: 'auto',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
           <PatternCanvas
             state={state}
             dispatch={dispatch}
