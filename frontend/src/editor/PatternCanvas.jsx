@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { flattenToPolygon, verticesToPathD } from './geometry/fillet.js'
 import { distanceToPolyline, pointInPolygon } from './geometry/hitTest.js'
 import { projectPointToPolyline } from './geometry/edgeDock.js'
@@ -100,9 +100,46 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
   const [marquee, setMarquee] = useState(null) // transient drag-select box: { start, end, additive }
   const [pieceDrag, setPieceDrag] = useState(null) // whole-piece move: { pieceIds, start, current }
   const [dragInternalPoint, setDragInternalPoint] = useState(null) // transient preview: { internalLineId, which, point }
+  const [boxSize, setBoxSize] = useState(null) // the SVG element's rendered CSS box, tracked for the grid below
 
   const { document, toolMode, activePieceId, selection, selectedPieceIds, selectedInternalLineId, internalLineSelection } =
     state
+
+  // The rendered SVG box is essentially never the viewBox's aspect ratio (the
+  // canvas is a wide flex panel, the viewBox starts square), and the default
+  // "xMidYMid meet" scaling (see screenToDoc.js) letterboxes whichever axis
+  // has slack rather than stretching -- so the viewBox itself covers less
+  // than the visible box along that axis. Tracked here purely so the grid
+  // (below) can be drawn out to the true visible edges instead of stopping
+  // at the viewBox's letterboxed edge and leaving a blank margin.
+  useEffect(() => {
+    const el = svgRef.current
+    if (!el) return
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      if (width > 0 && height > 0) setBoxSize({ width, height })
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  // Expands viewBox to the full visible rect implied by the current
+  // letterboxing, so grid lines reach every visible edge of the canvas.
+  // Interaction code (hit-testing, pan/zoom, piece rendering) keeps using
+  // the plain `viewBox` -- only the grid's draw extent is widened.
+  const visibleRect = (() => {
+    if (!boxSize || actualSize) return viewBox
+    const scale = Math.min(boxSize.width / viewBox.width, boxSize.height / viewBox.height)
+    if (!Number.isFinite(scale) || scale <= 0) return viewBox
+    const width = boxSize.width / scale
+    const height = boxSize.height / scale
+    return {
+      x: viewBox.x - (width - viewBox.width) / 2,
+      y: viewBox.y - (height - viewBox.height) / 2,
+      width,
+      height,
+    }
+  })()
 
   function toDoc(e) {
     return screenToDocPoint(svgRef.current, viewBox, e.clientX, e.clientY)
@@ -671,7 +708,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       onDoubleClick={handleDoubleClick}
       onKeyDown={handleKeyDown}
     >
-      <Grid viewBox={viewBox} actualSize={actualSize} />
+      <Grid viewBox={visibleRect} actualSize={actualSize} />
 
       {document.pieces.map((piece) => {
         const vertices = piece.vertices.map((v) => ({ ...v, point: liveVertexPoint(piece.id, v) }))
