@@ -17,17 +17,28 @@ const DEFAULT_VIEWBOX = { x: -20, y: -20, width: 240, height: 240 }
 const INTERNAL_LINE_DASH = { solid: undefined, dashed: '5 3', dotted: '1.2 2', dashdot: '5 2 1.2 2' }
 
 // Local tangent direction (degrees) of the stitch path at hole `index`,
-// via a central difference against its neighbors -- used to orient the
-// "diagonal" stitch-style marker relative to the seam itself rather than a
-// fixed screen angle, which looked wrong on anything but a horizontal edge
-// (a diamond rotated a flat 45° in screen space doesn't track the line at
-// all once the piece/edge is at an angle).
+// via a backward difference (the direction from the previous hole to this
+// one) -- used to orient diagonal-style stitch markers relative to the seam
+// itself rather than a fixed screen angle, which looked wrong on anything
+// but a horizontal edge. Deliberately one-sided rather than averaging the
+// segments on both sides of a corner: a corner hole is always the first
+// hole of its edge (see placeStitchHoles), so a backward difference makes
+// it lean with the edge that was just walked to reach it, and the very
+// next hole after the corner leans with the new edge -- a clean switch at
+// the corner instead of a blended in-between angle.
 function holeTangentAngleDeg(holes, index, closed) {
   const n = holes.length
   if (n < 2) return 0
-  const next = closed ? holes[(index + 1) % n] : holes[Math.min(index + 1, n - 1)]
-  const prev = closed ? holes[(index - 1 + n) % n] : holes[Math.max(index - 1, 0)]
-  return (Math.atan2(next.y - prev.y, next.x - prev.x) * 180) / Math.PI
+  if (closed || index > 0) {
+    const prev = holes[(index - 1 + n) % n]
+    const cur = holes[index]
+    return (Math.atan2(cur.y - prev.y, cur.x - prev.x) * 180) / Math.PI
+  }
+  // No previous hole for the very first point of an open path -- fall back
+  // to the outgoing direction instead.
+  const cur = holes[0]
+  const next = holes[1]
+  return (Math.atan2(next.y - cur.y, next.x - cur.x) * 180) / Math.PI
 }
 
 function Grid({ viewBox }) {
@@ -802,7 +813,7 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
                     y={h.y - holeRadius}
                     width={holeRadius * 2}
                     height={holeRadius * 2}
-                    transform={`rotate(45 ${h.x} ${h.y})`}
+                    transform={`rotate(${holeTangentAngleDeg(holes, hi, holesClosed) + 45} ${h.x} ${h.y})`}
                     fill="#b03060"
                   />
                 ) : def.style === 'slash' || def.style === 'backslash' ? (
