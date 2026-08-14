@@ -4,6 +4,7 @@ import { getPattern, updatePattern } from '../api/patternsApi'
 import { usePatternReducer, emptyDocument } from '../editor/patternReducer.js'
 import PatternCanvas from '../editor/PatternCanvas.jsx'
 import Toolbar from '../editor/Toolbar.jsx'
+import DimensionPanel from '../editor/DimensionPanel.jsx'
 import PieceListSidebar from '../editor/PieceListSidebar.jsx'
 import { useScreenCalibration } from '../calibration/useScreenCalibration.js'
 import CalibrationModal from '../calibration/CalibrationModal.jsx'
@@ -92,13 +93,14 @@ function PatternEditorPage() {
       </div>
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ flex: 1, overflow: 'auto' }}>
+        <div style={{ flex: 1, position: 'relative', overflow: 'auto' }}>
           <PatternCanvas
             state={state}
             dispatch={dispatch}
             actualSize={actualSize}
             pxPerMm={calibration.pxPerMm}
           />
+          <DimensionPanel state={state} dispatch={dispatch} />
         </div>
         <PieceListSidebar state={state} dispatch={dispatch} />
       </div>
