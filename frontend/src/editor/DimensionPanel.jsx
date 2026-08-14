@@ -115,10 +115,16 @@ function DrawByDimensionSection({ toolMode, dispatch }) {
 // it every time. Rendered as a sibling overlay on the canvas instead, so
 // showing/hiding it never moves the canvas.
 function DimensionPanel({ state, dispatch }) {
-  const { toolMode, document, selection, selectedPieceIds } = state
+  const { toolMode, document, selection, selectedPieceIds, internalLineSelection } = state
 
   const selectedVertex = selection
     ? document.pieces.find((p) => p.id === selection.pieceId)?.vertices.find((v) => v.id === selection.vertexId)
+    : null
+
+  const selectedInternalLinePoint = internalLineSelection
+    ? document.internalLines
+        .find((l) => l.id === internalLineSelection.internalLineId)
+        ?.points.find((p) => p.id === internalLineSelection.pointId)
     : null
 
   const singleSelectedPiece =
@@ -133,12 +139,57 @@ function DimensionPanel({ state, dispatch }) {
   const showDrawByDimension = toolMode === 'rect' || toolMode === 'line'
   const positionMin = toolMode === 'select' && singleSelectedPiece ? pieceBoundingBoxMin(singleSelectedPiece) : null
 
-  if (!selectedVertex && !selectedLinePiece && !selectedRect && !showDrawByDimension && !positionMin) {
+  if (
+    !selectedVertex &&
+    !selectedInternalLinePoint &&
+    !selectedLinePiece &&
+    !selectedRect &&
+    !showDrawByDimension &&
+    !positionMin
+  ) {
     return null
   }
 
   return (
     <div style={panelStyle}>
+      {selectedInternalLinePoint && (
+        <>
+          <strong>내부선 점 위치</strong>
+          <Field
+            label="X (mm)"
+            step={0.5}
+            value={Number(selectedInternalLinePoint.point.x.toFixed(3))}
+            onChange={(e) =>
+              dispatch({
+                type: 'MOVE_INTERNAL_LINE_POINT',
+                internalLineId: internalLineSelection.internalLineId,
+                pointId: internalLineSelection.pointId,
+                point: {
+                  x: num(e.target.value, selectedInternalLinePoint.point.x),
+                  y: selectedInternalLinePoint.point.y,
+                },
+              })
+            }
+          />
+          <Field
+            label="Y (mm)"
+            step={0.5}
+            value={Number(selectedInternalLinePoint.point.y.toFixed(3))}
+            onChange={(e) =>
+              dispatch({
+                type: 'MOVE_INTERNAL_LINE_POINT',
+                internalLineId: internalLineSelection.internalLineId,
+                pointId: internalLineSelection.pointId,
+                point: {
+                  x: selectedInternalLinePoint.point.x,
+                  y: num(e.target.value, selectedInternalLinePoint.point.y),
+                },
+              })
+            }
+          />
+        </>
+      )}
+
       {positionMin && (
         <>
           <strong>조각 위치</strong>

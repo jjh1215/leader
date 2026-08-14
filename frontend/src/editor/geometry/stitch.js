@@ -30,24 +30,74 @@ function pointAtDistance(points, closed, targetDist) {
   return points[points.length - 1]
 }
 
-// Trims insetMm off both ends of a straight segment (used for stitching
-// along an internalLine, where "inset" can't mean an inward polygon offset
-// like it does for a piece boundary -- there's no interior side to offset
-// into, only two ends to pull back from so holes don't land right on the
-// piece's outer edge). Returns null if the segment is too short to trim.
-export function insetSegment(a, b, insetMm) {
-  const dx = b.x - a.x
-  const dy = b.y - a.y
-  const length = Math.hypot(dx, dy)
-  if (length <= 0) return null
-  const trimmed = length - insetMm * 2
-  if (trimmed <= 0) return null
-  const ux = dx / length
-  const uy = dy / length
-  return [
-    { x: a.x + ux * insetMm, y: a.y + uy * insetMm },
-    { x: b.x - ux * insetMm, y: b.y - uy * insetMm },
-  ]
+function pointAndSegmentAtDistance(points, targetDist) {
+  let remaining = targetDist
+  const n = points.length
+  for (let i = 0; i < n - 1; i++) {
+    const a = points[i]
+    const b = points[i + 1]
+    const segLen = Math.hypot(b.x - a.x, b.y - a.y)
+    if (remaining <= segLen || i === n - 2) {
+      const t = segLen === 0 ? 0 : Math.min(1, Math.max(0, remaining / segLen))
+      return { point: { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }, segmentIndex: i }
+    }
+    remaining -= segLen
+  }
+  return { point: points[n - 1], segmentIndex: n - 2 }
+}
+
+// Trims insetMm off both ends of an open polyline (used for stitching along
+// an internalLine, where "inset" can't mean an inward polygon offset like it
+// does for a piece boundary -- there's no interior side to offset into, only
+// two ends to pull back from so holes don't land right on the piece's outer
+// edge). Works for a bent multi-point line, not just a straight 2-point
+// segment -- interior points swallowed entirely by a trimmed-off end are
+// dropped, and the rest keep their shape. Returns null if the line is too
+// short to survive the trim.
+export function trimPolyline(points, insetMm) {
+  if (points.length < 2) return null
+  const total = polylineLength(points, false)
+  if (total <= 0 || insetMm * 2 >= total) return null
+
+  const start = pointAndSegmentAtDistance(points, insetMm)
+  const end = pointAndSegmentAtDistance([...points].reverse(), insetMm)
+  const endSegmentIndex = points.length - 2 - end.segmentIndex
+
+  const interior = points.slice(start.segmentIndex + 1, Math.max(start.segmentIndex + 1, endSegmentIndex + 1))
+  return [start.point, ...interior, end.point]
+}
+
+// Shifts every point of an open polyline sideways by distanceMm, perpendicular
+// to its local direction (positive = 90° counter-clockwise from the A->B
+// direction, i.e. "rotate (dx,dy) left"). At interior bend points the two
+// adjacent segments' perpendiculars are averaged (a simple bisector, not a
+// true mitered offset) -- adequate for positioning a stitch-guide line, not
+// meant for boolean-accurate boundary offsetting.
+export function offsetOpenPolyline(points, distanceMm) {
+  if (points.length < 2 || !distanceMm) return points
+  const unitPerp = (ax, ay, bx, by) => {
+    const dx = bx - ax
+    const dy = by - ay
+    const len = Math.hypot(dx, dy)
+    return len === 0 ? { x: 0, y: 0 } : { x: -dy / len, y: dx / len }
+  }
+  return points.map((p, i) => {
+    let nx = 0
+    let ny = 0
+    if (i > 0) {
+      const perp = unitPerp(points[i - 1].x, points[i - 1].y, p.x, p.y)
+      nx += perp.x
+      ny += perp.y
+    }
+    if (i < points.length - 1) {
+      const perp = unitPerp(p.x, p.y, points[i + 1].x, points[i + 1].y)
+      nx += perp.x
+      ny += perp.y
+    }
+    const len = Math.hypot(nx, ny)
+    if (len === 0) return p
+    return { x: p.x + (nx / len) * distanceMm, y: p.y + (ny / len) * distanceMm }
+  })
 }
 
 // Returns hole center points spaced at approximately pitchMm along the path.

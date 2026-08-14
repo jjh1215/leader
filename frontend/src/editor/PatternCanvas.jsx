@@ -6,7 +6,7 @@ import { offsetPolygon } from './geometry/offset.js'
 import { pointsToPathD } from './geometry/path.js'
 import { pxToMm, screenToDocPoint } from './geometry/screenToDoc.js'
 import { projectPointOntoLine, snapOrthogonal } from './geometry/snap.js'
-import { insetSegment, placeStitchHoles } from './geometry/stitch.js'
+import { offsetOpenPolyline, placeStitchHoles, trimPolyline } from './geometry/stitch.js'
 
 const HIT_RADIUS_PX = 8
 const MIN_SHAPE_DRAG_MM = 0.5 // ignore accidental clicks-without-drag for rect/line tools
@@ -63,8 +63,10 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
   const [hoverDock, setHoverDock] = useState(null) // dock the hoverPoint is currently snapped to, if any
   const [marquee, setMarquee] = useState(null) // transient drag-select box: { start, end, additive }
   const [pieceDrag, setPieceDrag] = useState(null) // whole-piece move: { pieceIds, start, current }
+  const [dragInternalPoint, setDragInternalPoint] = useState(null) // transient preview: { internalLineId, pointId, point }
 
-  const { document, toolMode, activePieceId, selection, selectedPieceIds } = state
+  const { document, toolMode, activePieceId, selection, selectedPieceIds, selectedInternalLineId, internalLineSelection } =
+    state
 
   function toDoc(e) {
     return screenToDocPoint(svgRef.current, viewBox, e.clientX, e.clientY)
@@ -159,6 +161,64 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
     return best
   }
 
+  // An internal line's full point chain in document order: its two
+  // boundary-anchored ends plus whatever bend points have been inserted
+  // between them, each resolved to its live (in-progress-drag) position.
+  // Shared by hit-testing, rendering, and stitch-hole placement so all
+  // three always agree on the line's current shape.
+  function internalLineFullPoints(line) {
+    const piece = document.pieces.find((p) => p.id === line.sourcePieceId)
+    if (!piece) return null
+    const a = piece.vertices.find((v) => v.id === line.vertexIdA)
+    const b = piece.vertices.find((v) => v.id === line.vertexIdB)
+    if (!a || !b) return null
+    return [
+      liveVertexPoint(piece.id, a),
+      ...line.points.map((p) => liveInternalPoint(line.id, p)),
+      liveVertexPoint(piece.id, b),
+    ]
+  }
+
+  function liveInternalPoint(internalLineId, bendPoint) {
+    if (dragInternalPoint && dragInternalPoint.internalLineId === internalLineId && dragInternalPoint.pointId === bendPoint.id) {
+      return dragInternalPoint.point
+    }
+    return bendPoint.point
+  }
+
+  function findNearestInternalLinePoint(point) {
+    const threshold = hitRadiusMm()
+    let best = null
+    let bestDist = threshold
+    for (const line of document.internalLines) {
+      for (const p of line.points) {
+        const live = liveInternalPoint(line.id, p)
+        const d = Math.hypot(live.x - point.x, live.y - point.y)
+        if (d < bestDist) {
+          bestDist = d
+          best = { internalLineId: line.id, pointId: p.id, point: live }
+        }
+      }
+    }
+    return best
+  }
+
+  function findNearestInternalLine(point) {
+    const threshold = hitRadiusMm()
+    let best = null
+    let bestDist = threshold
+    for (const line of document.internalLines) {
+      const full = internalLineFullPoints(line)
+      if (!full) continue
+      const d = distanceToPolyline(point, full, false)
+      if (d < bestDist) {
+        bestDist = d
+        best = line.id
+      }
+    }
+    return best
+  }
+
   // Marquee/drag-select: any piece with at least one vertex inside the box
   // (the common "touch" rubber-band behavior, not strict full-enclosure).
   function piecesTouchingRect(minX, minY, maxX, maxY) {
@@ -208,6 +268,32 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         setDragVertex({ ...hit, point: v.point, dock: v.dock ?? null })
         return
       }
+
+      const pointHit = findNearestInternalLinePoint(point)
+      if (pointHit) {
+        dispatch({ type: 'SELECT_INTERNAL_LINE_POINT', internalLineId: pointHit.internalLineId, pointId: pointHit.pointId })
+        setDragInternalPoint(pointHit)
+        return
+      }
+
+      const internalLineHit = findNearestInternalLine(point)
+      if (internalLineHit) {
+        if (internalLineHit === selectedInternalLineId) {
+          // Already selected -- a further click on the line body inserts a
+          // new bend point there instead of just re-selecting it (mirrors
+          // "click again to add a point," as agreed with the user).
+          const line = document.internalLines.find((l) => l.id === internalLineHit)
+          const full = internalLineFullPoints(line)
+          const proj = full && projectPointToPolyline(point, full, false)
+          if (proj) {
+            dispatch({ type: 'ADD_INTERNAL_LINE_POINT', internalLineId: internalLineHit, point: proj.point, insertIndex: proj.edgeIndex })
+          }
+        } else {
+          dispatch({ type: 'SELECT_INTERNAL_LINE', internalLineId: internalLineHit })
+        }
+        return
+      }
+
       const pieceId = findNearestPiece(point)
       if (pieceId) {
         if (e.shiftKey) {
@@ -258,6 +344,8 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
       // near an edge docks it live, dragging far enough away frees it again.
       const snap = computeSnap(raw, { excludePieceId: dragVertex.pieceId })
       setDragVertex({ ...dragVertex, point: snap.point, dock: snap.dock })
+    } else if (dragInternalPoint) {
+      setDragInternalPoint({ ...dragInternalPoint, point: toDoc(e) })
     } else if (pieceDrag) {
       setPieceDrag({ ...pieceDrag, current: toDoc(e) })
     } else if (shapeDrag) {
@@ -297,6 +385,15 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         dock: dragVertex.dock,
       })
       setDragVertex(null)
+    }
+    if (dragInternalPoint) {
+      dispatch({
+        type: 'MOVE_INTERNAL_LINE_POINT',
+        internalLineId: dragInternalPoint.internalLineId,
+        pointId: dragInternalPoint.pointId,
+        point: dragInternalPoint.point,
+      })
+      setDragInternalPoint(null)
     }
     if (pieceDrag) {
       const dx = pieceDrag.current.x - pieceDrag.start.x
@@ -366,7 +463,15 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
 
   function handleKeyDown(e) {
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      if (selection) {
+      if (internalLineSelection) {
+        dispatch({
+          type: 'DELETE_INTERNAL_LINE_POINT',
+          internalLineId: internalLineSelection.internalLineId,
+          pointId: internalLineSelection.pointId,
+        })
+      } else if (selectedInternalLineId) {
+        dispatch({ type: 'DELETE_INTERNAL_LINE', internalLineId: selectedInternalLineId })
+      } else if (selection) {
         dispatch({ type: 'DELETE_VERTEX', pieceId: selection.pieceId, vertexId: selection.vertexId })
       } else if (selectedPieceIds.length > 0) {
         dispatch({ type: 'DELETE_PIECES', pieceIds: selectedPieceIds })
@@ -513,20 +618,20 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         const b = piece.vertices.find((v) => v.id === line.vertexIdB)
         if (!a || !b) return null
 
-        const aLive = liveVertexPoint(piece.id, a)
-        const bLive = liveVertexPoint(piece.id, b)
-        const isMoving = aLive !== a.point || bLive !== b.point
+        const liveFull = internalLineFullPoints(line)
+        if (!liveFull) return null
+        const originalFull = [a.point, ...line.points.map((p) => p.point), b.point]
+        const isMoving = liveFull.some((p, i) => p !== originalFull[i])
+        const isSelected = line.id === selectedInternalLineId
 
         return (
           <g key={line.id}>
             {isMoving && (
               // "Before" ghost: the committed (pre-drag) position, so the
               // original placement stays visible for reference while dragging.
-              <line
-                x1={a.point.x}
-                y1={a.point.y}
-                x2={b.point.x}
-                y2={b.point.y}
+              <path
+                d={pointsToPathD(originalFull, false)}
+                fill="none"
                 stroke="#7a4a1e"
                 strokeDasharray="2 3"
                 strokeWidth={0.8}
@@ -534,16 +639,31 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
                 vectorEffect="non-scaling-stroke"
               />
             )}
-            <line
-              x1={aLive.x}
-              y1={aLive.y}
-              x2={bLive.x}
-              y2={bLive.y}
-              stroke="#7a4a1e"
+            <path
+              d={pointsToPathD(liveFull, false)}
+              fill="none"
+              stroke={isSelected ? '#1e6fe0' : '#7a4a1e'}
               strokeDasharray="5 3"
-              strokeWidth={1.2}
+              strokeWidth={isSelected ? 2 : 1.2}
               vectorEffect="non-scaling-stroke"
             />
+            {toolMode === 'select' &&
+              line.points.map((p) => {
+                const live = liveInternalPoint(line.id, p)
+                const isPointSelected = internalLineSelection?.pointId === p.id
+                return (
+                  <circle
+                    key={p.id}
+                    cx={live.x}
+                    cy={live.y}
+                    r={isPointSelected ? vertexRadiusMm * 1.5 : vertexRadiusMm}
+                    fill={isPointSelected ? '#e0781e' : '#fff'}
+                    stroke="#7a4a1e"
+                    strokeWidth={1}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                )
+              })}
           </g>
         )
       })}
@@ -556,19 +676,18 @@ function PatternCanvas({ state, dispatch, actualSize = false, pxPerMm = 96 / 25.
         let holesClosed = false
         if (stitchLine.sourceInternalLineId) {
           // Stitching along a fold/mark internalLine: "inset" trims back
-          // from its two endpoints instead of offsetting inward (an open
-          // 2-point segment has no interior side to offset into), and it
-          // tracks the same live drag position as the internalLine's
-          // on-screen rendering so the holes don't lag behind a drag either.
+          // from its two ends instead of offsetting inward (an open line has
+          // no interior side to offset into), and it tracks the same live
+          // drag position as the internalLine's on-screen rendering so the
+          // holes don't lag behind a drag either. `sideOffset` then shifts
+          // the trimmed line sideways -- the "direction" the user picks for
+          // where the stitching sits relative to the fold/mark line itself.
           const line = document.internalLines.find((l) => l.id === stitchLine.sourceInternalLineId)
           if (!line) return null
-          const linePiece = document.pieces.find((p) => p.id === line.sourcePieceId)
-          if (!linePiece) return null
-          const a = linePiece.vertices.find((v) => v.id === line.vertexIdA)
-          const b = linePiece.vertices.find((v) => v.id === line.vertexIdB)
-          if (!a || !b) return null
-          const segment = insetSegment(liveVertexPoint(linePiece.id, a), liveVertexPoint(linePiece.id, b), stitchLine.insetDistance)
-          loops = segment ? [segment] : []
+          const full = internalLineFullPoints(line)
+          if (!full) return null
+          const trimmed = trimPolyline(full, stitchLine.insetDistance)
+          loops = trimmed ? [offsetOpenPolyline(trimmed, stitchLine.sideOffset ?? 0)] : []
         } else {
           const piece = document.pieces.find((p) => p.id === stitchLine.sourcePieceId)
           if (!piece || piece.vertices.length < 2) return null

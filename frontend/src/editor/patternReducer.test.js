@@ -572,6 +572,112 @@ describe('patternReducer', () => {
     })
   })
 
+  describe('internal line selection and bend points', () => {
+    function setupInternalLine() {
+      let state = initState()
+      state = patternReducer(state, { type: 'ADD_RECT_PIECE', corner1: { x: 0, y: 0 }, corner2: { x: 10, y: 10 } })
+      const rectId = state.document.pieces[0].id
+      state = patternReducer(state, { type: 'ADD_LINE_PIECE', start: { x: -5, y: 5 }, end: { x: 15, y: 5 } })
+      const lineId = state.document.pieces[1].id
+      state = patternReducer(state, { type: 'ADD_INTERNAL_LINE', closedPieceId: rectId, linePieceId: lineId })
+      const internalLineId = state.document.internalLines[0].id
+      return { state, internalLineId }
+    }
+
+    it('SELECT_INTERNAL_LINE sets object-level selection and clears piece/vertex selection', () => {
+      const { state: setup, internalLineId } = setupInternalLine()
+      const state = patternReducer(setup, { type: 'SELECT_INTERNAL_LINE', internalLineId })
+      expect(state.selectedInternalLineId).toBe(internalLineId)
+      expect(state.selectedPieceIds).toEqual([])
+      expect(state.selection).toBeNull()
+    })
+
+    it('ADD_INTERNAL_LINE_POINT inserts a bend point at the given index and selects it', () => {
+      const { state: setup, internalLineId } = setupInternalLine()
+      const state = patternReducer(setup, {
+        type: 'ADD_INTERNAL_LINE_POINT',
+        internalLineId,
+        point: { x: 5, y: 5 },
+        insertIndex: 0,
+      })
+      const line = state.document.internalLines.find((l) => l.id === internalLineId)
+      expect(line.points).toHaveLength(1)
+      expect(line.points[0].point).toEqual({ x: 5, y: 5 })
+      expect(state.internalLineSelection).toEqual({ internalLineId, pointId: line.points[0].id })
+      expect(state.selectedInternalLineId).toBe(internalLineId)
+    })
+
+    it('a second ADD_INTERNAL_LINE_POINT respects insertIndex ordering', () => {
+      const { state: setup, internalLineId } = setupInternalLine()
+      let state = patternReducer(setup, {
+        type: 'ADD_INTERNAL_LINE_POINT',
+        internalLineId,
+        point: { x: 5, y: 5 },
+        insertIndex: 0,
+      })
+      // Insert before the first bend point (index 0 again -- "between A and the first point").
+      state = patternReducer(state, {
+        type: 'ADD_INTERNAL_LINE_POINT',
+        internalLineId,
+        point: { x: 2, y: 5 },
+        insertIndex: 0,
+      })
+      const line = state.document.internalLines.find((l) => l.id === internalLineId)
+      expect(line.points.map((p) => p.point)).toEqual([
+        { x: 2, y: 5 },
+        { x: 5, y: 5 },
+      ])
+    })
+
+    it('MOVE_INTERNAL_LINE_POINT updates the bend point coordinates', () => {
+      const { state: setup, internalLineId } = setupInternalLine()
+      let state = patternReducer(setup, {
+        type: 'ADD_INTERNAL_LINE_POINT',
+        internalLineId,
+        point: { x: 5, y: 5 },
+        insertIndex: 0,
+      })
+      const pointId = state.document.internalLines[0].points[0].id
+      state = patternReducer(state, {
+        type: 'MOVE_INTERNAL_LINE_POINT',
+        internalLineId,
+        pointId,
+        point: { x: 5, y: 8 },
+      })
+      expect(state.document.internalLines[0].points[0].point).toEqual({ x: 5, y: 8 })
+    })
+
+    it('DELETE_INTERNAL_LINE_POINT removes the bend point and clears its selection', () => {
+      const { state: setup, internalLineId } = setupInternalLine()
+      let state = patternReducer(setup, {
+        type: 'ADD_INTERNAL_LINE_POINT',
+        internalLineId,
+        point: { x: 5, y: 5 },
+        insertIndex: 0,
+      })
+      const pointId = state.document.internalLines[0].points[0].id
+      state = patternReducer(state, { type: 'DELETE_INTERNAL_LINE_POINT', internalLineId, pointId })
+      expect(state.document.internalLines[0].points).toHaveLength(0)
+      expect(state.internalLineSelection).toBeNull()
+    })
+
+    it('DELETE_INTERNAL_LINE removes the line and its stitch lines, but leaves the piece boundary intact', () => {
+      const { state: setup, internalLineId } = setupInternalLine()
+      let state = patternReducer(setup, { type: 'SELECT_INTERNAL_LINE', internalLineId })
+      const pieceVertexCountBefore = state.document.pieces[0].vertices.length
+      state = patternReducer(state, {
+        type: 'ADD_STITCH_LINE',
+        stitchLine: { id: 's1', name: 's', sourceInternalLineId: internalLineId, insetDistance: 1, stitchPatternDefId: 'd1' },
+      })
+
+      state = patternReducer(state, { type: 'DELETE_INTERNAL_LINE', internalLineId })
+      expect(state.document.internalLines).toHaveLength(0)
+      expect(state.document.stitchLines).toHaveLength(0)
+      expect(state.selectedInternalLineId).toBeNull()
+      expect(state.document.pieces[0].vertices).toHaveLength(pieceVertexCountBefore)
+    })
+  })
+
   describe('TRANSLATE_PIECES', () => {
     it('shifts every vertex of the listed pieces by (dx, dy), leaving others untouched', () => {
       let state = initState()
@@ -631,6 +737,18 @@ describe('patternReducer', () => {
       const legacyDocument = { pieces: [], stitchPatternDefs: [], stitchLines: [], offsetPaths: [] }
       const state = patternReducer(undefined, { type: 'LOAD', document: legacyDocument })
       expect(state.document.internalLines).toEqual([])
+    })
+
+    it('backfills `points: []` on an internalLine saved before bend points existed', () => {
+      const legacyDocument = {
+        pieces: [],
+        stitchPatternDefs: [],
+        stitchLines: [],
+        offsetPaths: [],
+        internalLines: [{ id: 'l1', name: '내부선', sourcePieceId: 'p1', vertexIdA: 'v1', vertexIdB: 'v2' }],
+      }
+      const state = patternReducer(undefined, { type: 'LOAD', document: legacyDocument })
+      expect(state.document.internalLines[0].points).toEqual([])
     })
   })
 })

@@ -27,9 +27,12 @@ function cloneDoc(doc) {
 // Fills in any document-level arrays missing from `document` (e.g. a pattern
 // saved before `internalLines` -- or any future field -- existed) with
 // emptyDocument()'s defaults, so loading an older saved pattern doesn't
-// crash on a missing array instead of just treating it as "none yet."
+// crash on a missing array instead of just treating it as "none yet." Also
+// backfills each internalLine's `points` array (bend points added between
+// its two boundary-anchored ends) for lines saved before that existed.
 function normalizeDocument(document) {
-  return { ...emptyDocument(), ...document }
+  const merged = { ...emptyDocument(), ...document }
+  return { ...merged, internalLines: merged.internalLines.map((l) => ({ points: [], ...l })) }
 }
 
 function initState(document) {
@@ -41,6 +44,8 @@ function initState(document) {
     activePieceId: null,
     selection: null, // { pieceId, vertexId }
     selectedPieceIds: [], // whole-piece selection, for merge/split/internal-line etc.
+    selectedInternalLineId: null, // whole-internal-line selection (object-level, pairs with selectedPieceIds)
+    internalLineSelection: null, // { internalLineId, pointId } -- a single bend point (point-level, pairs with `selection`)
   }
 }
 
@@ -187,21 +192,37 @@ export function patternReducer(state, action) {
         ...state,
         selection: { pieceId: action.pieceId, vertexId: action.vertexId },
         selectedPieceIds: [],
+        selectedInternalLineId: null,
+        internalLineSelection: null,
       }
 
+    // Clears point-level selection (a piece vertex, or an internal line's
+    // bend point) -- the object-level counterpart is CLEAR_PIECE_SELECTION.
     case 'CLEAR_SELECTION':
-      return { ...state, selection: null }
+      return { ...state, selection: null, internalLineSelection: null }
 
     case 'SELECT_PIECE': {
       const { pieceId, additive } = action
       if (!additive) {
-        return { ...state, selection: null, selectedPieceIds: [pieceId] }
+        return {
+          ...state,
+          selection: null,
+          selectedPieceIds: [pieceId],
+          selectedInternalLineId: null,
+          internalLineSelection: null,
+        }
       }
       const already = state.selectedPieceIds.includes(pieceId)
       const selectedPieceIds = already
         ? state.selectedPieceIds.filter((id) => id !== pieceId)
         : [...state.selectedPieceIds, pieceId]
-      return { ...state, selection: null, selectedPieceIds }
+      return {
+        ...state,
+        selection: null,
+        selectedPieceIds,
+        selectedInternalLineId: null,
+        internalLineSelection: null,
+      }
     }
 
     // Marquee/drag-select result: a set of piece ids all at once. Unlike
@@ -212,11 +233,44 @@ export function patternReducer(state, action) {
       const selectedPieceIds = additive
         ? Array.from(new Set([...state.selectedPieceIds, ...pieceIds]))
         : pieceIds
-      return { ...state, selection: null, selectedPieceIds }
+      return {
+        ...state,
+        selection: null,
+        selectedPieceIds,
+        selectedInternalLineId: null,
+        internalLineSelection: null,
+      }
     }
 
+    // Clears object-level selection (a whole piece, or a whole internal
+    // line) -- the point-level counterpart is CLEAR_SELECTION.
     case 'CLEAR_PIECE_SELECTION':
-      return { ...state, selectedPieceIds: [] }
+      return { ...state, selectedPieceIds: [], selectedInternalLineId: null }
+
+    // Selects an internal line as a whole (object-level, like SELECT_PIECE)
+    // -- lets it be deleted via Delete, and is the "already selected" gate
+    // that turns a further click on its body into ADD_INTERNAL_LINE_POINT
+    // instead of re-selecting it.
+    case 'SELECT_INTERNAL_LINE':
+      return {
+        ...state,
+        selectedInternalLineId: action.internalLineId,
+        selectedPieceIds: [],
+        selection: null,
+        internalLineSelection: null,
+      }
+
+    // Selects one bend point of an internal line (point-level, like
+    // SELECT_VERTEX) -- also marks the owning line as the selected object,
+    // so it stays highlighted while one of its points is being edited.
+    case 'SELECT_INTERNAL_LINE_POINT':
+      return {
+        ...state,
+        internalLineSelection: { internalLineId: action.internalLineId, pointId: action.pointId },
+        selectedInternalLineId: action.internalLineId,
+        selection: null,
+        selectedPieceIds: [],
+      }
 
     // The "mark, don't cut" counterpart to SPLIT_PIECE: same selection (a
     // closed piece + a crossing open 2-point line) and the same underlying
@@ -271,6 +325,7 @@ export function patternReducer(state, action) {
         sourcePieceId: closedPieceId,
         vertexIdA: newVertexIds[0],
         vertexIdB: newVertexIds[1],
+        points: [], // bend points added later via ADD_INTERNAL_LINE_POINT
       }
 
       const nextDoc = {
@@ -288,6 +343,70 @@ export function patternReducer(state, action) {
         selectedPieceIds: [closedPieceId],
         activePieceId: null,
         selection: null,
+      }
+    }
+
+    // Inserts a bend point into an internal line's own point list (not the
+    // piece's boundary -- these live only on the line), turning it from a
+    // straight A-B segment into an editable multi-segment polyline. Canvas
+    // computes `insertIndex` via projectPointToPolyline on the line's full
+    // point chain [A, ...points, B]; that function's edgeIndex already means
+    // exactly "insert after this index" here, so it's passed straight through.
+    case 'ADD_INTERNAL_LINE_POINT': {
+      const { internalLineId, point, insertIndex } = action
+      const line = state.document.internalLines.find((l) => l.id === internalLineId)
+      if (!line) return state
+      const newPoint = { id: generateId(), point }
+      const points = [...line.points.slice(0, insertIndex), newPoint, ...line.points.slice(insertIndex)]
+      const nextInternalLines = state.document.internalLines.map((l) =>
+        l.id === internalLineId ? { ...l, points } : l
+      )
+      return {
+        ...commit(state, { ...state.document, internalLines: nextInternalLines }),
+        selection: null,
+        selectedPieceIds: [],
+        selectedInternalLineId: internalLineId,
+        internalLineSelection: { internalLineId, pointId: newPoint.id },
+      }
+    }
+
+    case 'MOVE_INTERNAL_LINE_POINT': {
+      const { internalLineId, pointId, point } = action
+      const nextInternalLines = state.document.internalLines.map((l) =>
+        l.id !== internalLineId
+          ? l
+          : { ...l, points: l.points.map((p) => (p.id === pointId ? { ...p, point } : p)) }
+      )
+      return commit(state, { ...state.document, internalLines: nextInternalLines })
+    }
+
+    case 'DELETE_INTERNAL_LINE_POINT': {
+      const { internalLineId, pointId } = action
+      const nextInternalLines = state.document.internalLines.map((l) =>
+        l.id !== internalLineId ? l : { ...l, points: l.points.filter((p) => p.id !== pointId) }
+      )
+      const nextState = commit(state, { ...state.document, internalLines: nextInternalLines })
+      const hadSelection = state.internalLineSelection?.internalLineId === internalLineId &&
+        state.internalLineSelection?.pointId === pointId
+      return hadSelection ? { ...nextState, internalLineSelection: null } : nextState
+    }
+
+    // Un-marks the fold/score line itself (its endpoints stay as ordinary
+    // boundary vertices -- only the marking and its dependent stitch lines
+    // go away, the piece's outer shape is untouched).
+    case 'DELETE_INTERNAL_LINE': {
+      const { internalLineId } = action
+      const nextDoc = {
+        ...state.document,
+        internalLines: state.document.internalLines.filter((l) => l.id !== internalLineId),
+        stitchLines: state.document.stitchLines.filter((s) => s.sourceInternalLineId !== internalLineId),
+      }
+      const nextState = commit(state, nextDoc)
+      return {
+        ...nextState,
+        selectedInternalLineId: state.selectedInternalLineId === internalLineId ? null : nextState.selectedInternalLineId,
+        internalLineSelection:
+          state.internalLineSelection?.internalLineId === internalLineId ? null : nextState.internalLineSelection,
       }
     }
 
@@ -551,7 +670,16 @@ export function patternReducer(state, action) {
         ),
       }
       const nextState = commit(state, nextDoc)
-      return state.selection?.vertexId === action.vertexId ? { ...nextState, selection: null } : nextState
+      return {
+        ...nextState,
+        selection: state.selection?.vertexId === action.vertexId ? null : nextState.selection,
+        selectedInternalLineId: removedInternalLineIds.includes(state.selectedInternalLineId)
+          ? null
+          : nextState.selectedInternalLineId,
+        internalLineSelection: removedInternalLineIds.includes(state.internalLineSelection?.internalLineId)
+          ? null
+          : nextState.internalLineSelection,
+      }
     }
 
     case 'DELETE_PIECE': {
@@ -576,6 +704,12 @@ export function patternReducer(state, action) {
         toolMode: wasActive ? 'select' : nextState.toolMode,
         selection: hadSelection ? null : nextState.selection,
         selectedPieceIds: nextState.selectedPieceIds.filter((id) => id !== action.pieceId),
+        selectedInternalLineId: removedInternalLineIds.includes(state.selectedInternalLineId)
+          ? null
+          : nextState.selectedInternalLineId,
+        internalLineSelection: removedInternalLineIds.includes(state.internalLineSelection?.internalLineId)
+          ? null
+          : nextState.internalLineSelection,
       }
     }
 
@@ -605,6 +739,12 @@ export function patternReducer(state, action) {
         toolMode: wasActive ? 'select' : nextState.toolMode,
         selection: hadSelection ? null : nextState.selection,
         selectedPieceIds: nextState.selectedPieceIds.filter((id) => !pieceIds.includes(id)),
+        selectedInternalLineId: removedInternalLineIds.includes(state.selectedInternalLineId)
+          ? null
+          : nextState.selectedInternalLineId,
+        internalLineSelection: removedInternalLineIds.includes(state.internalLineSelection?.internalLineId)
+          ? null
+          : nextState.internalLineSelection,
       }
     }
 

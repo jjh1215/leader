@@ -20,7 +20,7 @@ const panelStyle = {
 }
 
 function hintFor(state) {
-  const { toolMode, selectedPieceIds } = state
+  const { toolMode, selectedPieceIds, selectedInternalLineId, internalLineSelection } = state
   switch (toolMode) {
     case 'draw-line':
       return '클릭해서 점 추가 (Shift=직각 스냅) · 다른 점/변 근처에 놓으면 도킹되어 따라 움직임 · 시작점 근처를 클릭하면 닫힘 · Esc/더블클릭으로 열린 선 종료'
@@ -29,9 +29,15 @@ function hintFor(state) {
     case 'line':
       return '드래그해서 직선 그리기 (Shift=직각 스냅) · 다른 점/변 근처에 놓으면 도킹됨 · 우측 하단에서 치수로도 그릴 수 있음'
     case 'select':
+      if (internalLineSelection) {
+        return '내부선의 점을 드래그해서 이동 · Delete로 이 점만 삭제 · 우측 하단에서 좌표로도 이동 가능'
+      }
+      if (selectedInternalLineId) {
+        return '선택된 내부선을 다시 클릭하면 그 자리에 꺾이는 점 추가 · Delete로 내부선 전체 삭제(조각 모양은 유지)'
+      }
       return selectedPieceIds.length > 0
         ? `내부를 드래그하면 조각 전체 이동(Shift=이웃점과 직선 유지) · Shift+클릭/드래그로 여러 조각 선택 · Delete로 삭제 · 도형+선 선택 후 나누기/합치기/내부선 표시 · ${selectedPieceIds.length}개 선택됨`
-        : '조각을 클릭+드래그하면 이동 · 빈 곳에서 드래그하면 여러 조각을 한번에 선택합니다'
+        : '조각을 클릭+드래그하면 이동 · 내부선을 클릭하면 선택 · 빈 곳에서 드래그하면 여러 조각을 한번에 선택합니다'
     default:
       return null
   }

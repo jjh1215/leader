@@ -106,6 +106,7 @@ function StitchLineControls({ piece, document, dispatch }) {
 
 function InternalLineStitchControls({ internalLine, document, dispatch }) {
   const [inset, setInset] = useState(2)
+  const [sideOffset, setSideOffset] = useState(0)
   const [defId, setDefId] = useState(document.stitchPatternDefs[0]?.id ?? '')
   const lineStitchLines = document.stitchLines.filter((s) => s.sourceInternalLineId === internalLine.id)
 
@@ -121,8 +122,18 @@ function InternalLineStitchControls({ internalLine, document, dispatch }) {
           value={inset}
           onChange={(e) => setInset(Number(e.target.value))}
           style={{ width: '3.5rem' }}
+          title="양 끝에서 트임 거리"
         />
         <span style={{ fontSize: '0.75rem' }}>mm 인셋</span>
+        <input
+          type="number"
+          step="0.5"
+          value={sideOffset}
+          onChange={(e) => setSideOffset(Number(e.target.value))}
+          style={{ width: '3.5rem' }}
+          title="선 기준 좌우 치우침 (+/-)"
+        />
+        <span style={{ fontSize: '0.75rem' }}>mm 방향</span>
         <select value={defId} onChange={(e) => setDefId(e.target.value)}>
           {document.stitchPatternDefs.map((def) => (
             <option key={def.id} value={def.id}>
@@ -138,9 +149,10 @@ function InternalLineStitchControls({ internalLine, document, dispatch }) {
               type: 'ADD_STITCH_LINE',
               stitchLine: {
                 id: generateId(),
-                name: `내부선 스티치 -${inset}mm`,
+                name: `내부선 스티치 -${inset}mm${sideOffset ? ` (${sideOffset > 0 ? '+' : ''}${sideOffset}mm)` : ''}`,
                 sourceInternalLineId: internalLine.id,
                 insetDistance: inset,
+                sideOffset,
                 stitchPatternDefId: defId,
               },
             })

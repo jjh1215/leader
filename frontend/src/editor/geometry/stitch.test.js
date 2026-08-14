@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { insetSegment, placeStitchHoles } from './stitch.js'
+import { offsetOpenPolyline, placeStitchHoles, trimPolyline } from './stitch.js'
 
 const SQUARE_10 = [
   { x: 0, y: 0 },
@@ -75,9 +75,9 @@ describe('placeStitchHoles', () => {
   })
 })
 
-describe('insetSegment', () => {
-  it('trims both ends of a horizontal segment inward by insetMm', () => {
-    const result = insetSegment({ x: 0, y: 0 }, { x: 10, y: 0 }, 2)
+describe('trimPolyline', () => {
+  it('trims both ends of a straight 2-point segment inward by insetMm', () => {
+    const result = trimPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }], 2)
     expect(result).toEqual([
       { x: 2, y: 0 },
       { x: 8, y: 0 },
@@ -85,19 +85,66 @@ describe('insetSegment', () => {
   })
 
   it('trims along an arbitrary direction, not just axis-aligned', () => {
-    const result = insetSegment({ x: 0, y: 0 }, { x: 6, y: 8 }, 2.5) // length 10
+    const result = trimPolyline([{ x: 0, y: 0 }, { x: 6, y: 8 }], 2.5) // length 10
     expect(result[0].x).toBeCloseTo(1.5, 6)
     expect(result[0].y).toBeCloseTo(2, 6)
     expect(result[1].x).toBeCloseTo(4.5, 6)
     expect(result[1].y).toBeCloseTo(6, 6)
   })
 
-  it('returns null when the inset would consume the whole segment', () => {
-    expect(insetSegment({ x: 0, y: 0 }, { x: 10, y: 0 }, 5)).toBeNull()
-    expect(insetSegment({ x: 0, y: 0 }, { x: 10, y: 0 }, 6)).toBeNull()
+  it('returns null when the inset would consume the whole line', () => {
+    expect(trimPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }], 5)).toBeNull()
+    expect(trimPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }], 6)).toBeNull()
   })
 
-  it('returns null for a zero-length segment', () => {
-    expect(insetSegment({ x: 3, y: 3 }, { x: 3, y: 3 }, 1)).toBeNull()
+  it('returns null for a zero-length line', () => {
+    expect(trimPolyline([{ x: 3, y: 3 }, { x: 3, y: 3 }], 1)).toBeNull()
+  })
+
+  it('keeps interior bend points and trims each end within its own segment', () => {
+    // L-shape: (0,0)->(5,0)->(5,5), each leg 5mm, total 10mm
+    const result = trimPolyline(
+      [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 5 }],
+      1
+    )
+    expect(result).toEqual([
+      { x: 1, y: 0 },
+      { x: 5, y: 0 },
+      { x: 5, y: 4 },
+    ])
+  })
+
+  it("drops a bend point entirely swallowed by one end's trim", () => {
+    // Short first leg (2mm), long second leg (20mm), total 22mm. Trimming
+    // 5mm off the start eats past the short leg's bend point entirely.
+    const result = trimPolyline(
+      [{ x: 0, y: 0 }, { x: 2, y: 0 }, { x: 2, y: 20 }],
+      5
+    )
+    expect(result).toEqual([
+      { x: 2, y: 3 },
+      { x: 2, y: 15 },
+    ])
+  })
+})
+
+describe('offsetOpenPolyline', () => {
+  it('shifts a straight 2-point segment perpendicular to its direction', () => {
+    const result = offsetOpenPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }], 3)
+    expect(result[0].x).toBeCloseTo(0, 6)
+    expect(result[0].y).toBeCloseTo(3, 6)
+    expect(result[1].x).toBeCloseTo(10, 6)
+    expect(result[1].y).toBeCloseTo(3, 6)
+  })
+
+  it('flips to the other side for a negative distance', () => {
+    const result = offsetOpenPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }], -3)
+    expect(result[0].y).toBeCloseTo(-3, 6)
+    expect(result[1].y).toBeCloseTo(-3, 6)
+  })
+
+  it('returns the same points for a zero distance', () => {
+    const points = [{ x: 0, y: 0 }, { x: 10, y: 0 }]
+    expect(offsetOpenPolyline(points, 0)).toBe(points)
   })
 })
